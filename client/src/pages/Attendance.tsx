@@ -135,9 +135,109 @@ export default function Attendance() {
 
   const handleExport = () => {
     if (!records || records.length === 0) return;
-    const worksheet = XLSX.utils.json_to_sheet(records);
+    const employeeMap = new Map((employees || []).map(emp => [emp.code, emp.name]));
+
+    const recordKeyMap = new Map<string, any>();
+    records.forEach((record: any) => {
+      recordKeyMap.set(`${record.employeeCode}__${record.date}`, record);
+    });
+
+    const detailedRows = records.map((record: any) => {
+      const dateObj = new Date(`${record.date}T00:00:00`);
+      const dayName = format(dateObj, "EEEE");
+      const isFriday = dateObj.getUTCDay() === 5;
+      const hasPunch = Boolean(record.checkIn || record.checkOut);
+      const isCompDay = record.status === "Comp Day";
+      const leaveType = isCompDay
+        ? (record.notes === "Official Leave" ? "Official Leave" : "HR Leave")
+        : "";
+      const dayType = isFriday ? "Friday" : isCompDay ? leaveType : "Work";
+      const penaltyText = Array.isArray(record.penalties)
+        ? record.penalties.map((p: any) => `${p.type}: ${p.value}`).join(" | ")
+        : "";
+
+      return {
+        employee_code: record.employeeCode,
+        employee_name: employeeMap.get(record.employeeCode) || "",
+        date: record.date,
+        day_name: dayName,
+        check_in: record.checkIn ? format(new Date(record.checkIn), "HH:mm") : "",
+        check_out: record.checkOut ? format(new Date(record.checkOut), "HH:mm") : "",
+        working_hours: typeof record.totalHours === "number" ? record.totalHours.toFixed(2) : "",
+        day_type: dayType,
+        is_comp_day: isCompDay ? "يوم بالبدل" : "",
+        penalties: penaltyText,
+        notes: record.notes || "",
+        "بدل يوم الجمعة": isFriday && hasPunch ? 1 : "",
+      };
+    });
+
+    const summaryByEmployee = new Map<string, {
+      employee_code: string;
+      employee_name: string;
+      total_work_days: number;
+      total_fridays: number;
+      total_official_leaves: number;
+      total_comp_days: number;
+      total_absence_days: number;
+      total_penalties: number;
+      notes: string;
+      "عدد أيام بدل الجمعة": number;
+    }>();
+
+    detailedRows.forEach((row) => {
+      const existing = summaryByEmployee.get(row.employee_code) || {
+        employee_code: row.employee_code,
+        employee_name: row.employee_name,
+        total_work_days: 0,
+        total_fridays: 0,
+        total_official_leaves: 0,
+        total_comp_days: 0,
+        total_absence_days: 0,
+        total_penalties: 0,
+        notes: "",
+        "عدد أيام بدل الجمعة": 0,
+      };
+
+      if (row.day_type === "Friday") {
+        existing.total_fridays += 1;
+      } else if (row.day_type === "Official Leave") {
+        existing.total_official_leaves += 1;
+        existing.total_comp_days += 1;
+      } else if (row.day_type === "HR Leave") {
+        existing.total_comp_days += 1;
+      } else {
+        existing.total_work_days += 1;
+      }
+
+      if (row["بدل يوم الجمعة"] === 1) {
+        existing["عدد أيام بدل الجمعة"] += 1;
+      }
+
+      const sourceRecord = recordKeyMap.get(`${row.employee_code}__${row.date}`);
+      if (sourceRecord?.status === "Absent") {
+        existing.total_absence_days += 1;
+      }
+
+      if (sourceRecord?.penalties && Array.isArray(sourceRecord.penalties)) {
+        sourceRecord.penalties.forEach((penalty: any) => {
+          const value = Number(penalty.value);
+          if (Number.isFinite(value)) {
+            existing.total_penalties += value;
+          }
+        });
+      }
+
+      summaryByEmployee.set(row.employee_code, existing);
+    });
+
+    const summaryRows = Array.from(summaryByEmployee.values());
+
     const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, "Attendance");
+    const detailSheet = XLSX.utils.json_to_sheet(detailedRows);
+    const summarySheet = XLSX.utils.json_to_sheet(summaryRows);
+    XLSX.utils.book_append_sheet(workbook, detailSheet, "تفصيلي");
+    XLSX.utils.book_append_sheet(workbook, summarySheet, "ملخص");
     XLSX.writeFile(workbook, `Attendance_${dateRange.start}_${dateRange.end}.xlsx`);
     toast({ title: "تم التصدير", description: "تم تحميل ملف الإكسل بنجاح" });
   };
@@ -270,7 +370,7 @@ export default function Attendance() {
                           {record.overtimeHours && record.overtimeHours > 0 ? `+${record.overtimeHours.toFixed(2)}` : "-"}
                         </td>
                         <td className="px-6 py-4">
-                          <StatusBadge status={record.status} isOvernight={record.isOvernight} />
+                          <StatusBadge status={record.status} />
                         </td>
                         <td className="px-6 py-4">
                           <div className="flex flex-col gap-1">
@@ -337,12 +437,14 @@ export default function Attendance() {
   );
 }
 
-function StatusBadge({ status, isOvernight }: { status: string | null, isOvernight: boolean | null }) {
+function StatusBadge({ status }: { status: string | null }) {
   const styles: Record<string, string> = {
     "Present": "status-present",
     "Absent": "status-absent",
     "Late": "status-late",
     "Excused": "status-excused",
+    "Friday": "bg-amber-100 text-amber-700 border-amber-200",
+    "Comp Day": "bg-emerald-100 text-emerald-700 border-emerald-200",
   };
   
   const labels: Record<string, string> = {
@@ -350,6 +452,8 @@ function StatusBadge({ status, isOvernight }: { status: string | null, isOvernig
     "Absent": "غياب",
     "Late": "تأخير",
     "Excused": "مأذون",
+    "Friday": "جمعة",
+    "Comp Day": "يوم بالبدل",
   };
 
   const baseStyle = styles[status || ""] || "bg-slate-100 text-slate-600";
@@ -360,11 +464,6 @@ function StatusBadge({ status, isOvernight }: { status: string | null, isOvernig
       <span className={cn("px-2.5 py-0.5 rounded-full text-xs font-bold border", baseStyle)}>
         {label}
       </span>
-      {isOvernight && (
-        <span className="text-xs bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded border border-indigo-200">
-          ليلي
-        </span>
-      )}
     </div>
   );
 }
