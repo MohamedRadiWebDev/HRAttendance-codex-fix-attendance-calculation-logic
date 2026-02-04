@@ -135,7 +135,7 @@ export default function Attendance() {
 
   const handleExport = () => {
     if (!records || records.length === 0) return;
-    const employeeMap = new Map((employees || []).map(emp => [emp.code, emp.name]));
+    const employeeMap = new Map((employees || []).map(emp => [emp.code, emp.nameAr]));
 
     const toExcelTime = (value: Date) => {
       const seconds = value.getHours() * 3600 + value.getMinutes() * 60 + value.getSeconds();
@@ -182,8 +182,17 @@ export default function Attendance() {
     }>();
 
     records.forEach((record: any) => {
-      const dateObj = new Date(`${record.date}T00:00:00`);
-      const dayIndex = dateObj.getUTCDay();
+      const [yearRaw, monthRaw, dayRaw] = String(record.date || "").split("-").map(Number);
+      const year = Number.isFinite(yearRaw) ? yearRaw : 1970;
+      const monthIndex = Number.isFinite(monthRaw) ? monthRaw - 1 : 0;
+      const dayOfMonth = Number.isFinite(dayRaw) ? dayRaw : 1;
+      const dateObj = new Date(year, monthIndex, dayOfMonth);
+      const dayIndex = dateObj.getDay();
+      const exportedDateString = `${String(year).padStart(4, "0")}-${String(monthIndex + 1).padStart(2, "0")}-${String(dayOfMonth).padStart(2, "0")}`;
+      if (process.env.NODE_ENV === "development" && exportedDateString !== record.date) {
+        console.error("Export date mismatch", { recordId: record.id, recordDate: record.date, exportedDateString });
+      }
+      const excelDateSerial = (Date.UTC(year, monthIndex, dayOfMonth) - Date.UTC(1899, 11, 30)) / 86400000;
       const isFriday = dayIndex === 5;
       const attendedFriday = record.status === "Friday Attended";
       const isCompDay = record.status === "Comp Day";
@@ -244,10 +253,10 @@ export default function Attendance() {
         : (record.notes || "").replace(/[\r\n]+/g, " ").trim();
 
       const detailRow = [
-        dateObj,
+        excelDateSerial,
         dayNames[dayIndex],
         record.employeeCode,
-        employeeMap.get(record.employeeCode) || "",
+        employeeMap.get(record.employeeCode) || "(غير موجود بالماستر)",
         record.checkIn ? toExcelTime(new Date(record.checkIn)) : "-",
         record.checkOut ? toExcelTime(new Date(record.checkOut)) : "-",
         typeof record.totalHours === "number" ? Number(record.totalHours.toFixed(2)) : "-",
@@ -266,7 +275,7 @@ export default function Attendance() {
 
       const summary = summaryByEmployee.get(record.employeeCode) || {
         code: record.employeeCode,
-        name: employeeMap.get(record.employeeCode) || "",
+        name: employeeMap.get(record.employeeCode) || "(غير موجود بالماستر)",
         workDays: 0,
         fridays: 0,
         fridayAttendance: 0,
@@ -377,7 +386,7 @@ export default function Attendance() {
     for (let rowIndex = 1; rowIndex < detailRows.length; rowIndex += 1) {
       const dateCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: 0 })];
       if (dateCell) {
-        dateCell.t = "d";
+        dateCell.t = "n";
         dateCell.z = "yyyy-mm-dd";
       }
       const checkInCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: 4 })];
