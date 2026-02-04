@@ -137,29 +137,21 @@ export default function Attendance() {
     if (!records || records.length === 0) return;
     const employeeMap = new Map((employees || []).map(emp => [emp.code, emp.name]));
 
-    const recordKeyMap = new Map<string, any>();
-    records.forEach((record: any) => {
-      recordKeyMap.set(`${record.employeeCode}__${record.date}`, record);
-    });
-
-    const dayNames = ["الأحد", "الإثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة", "السبت"];
-
     const toExcelTime = (value: Date) => {
       const seconds = value.getHours() * 3600 + value.getMinutes() * 60 + value.getSeconds();
       return seconds / 86400;
     };
 
     const detailHeaders = [
-      "الكود",
-      "الاسم",
       "التاريخ",
-      "اليوم",
-      "بصمة دخول",
-      "بصمة خروج",
+      "الموظف / الكود",
+      "الدخول",
+      "الخروج",
+      "ساعات العمل",
+      "الإضافي",
       "نوع اليوم",
-      "حضور الجمعة",
       "الحالة",
-      "التأخير",
+      "تأخير",
       "انصراف مبكر",
       "سهو بصمة",
       "غياب",
@@ -202,58 +194,66 @@ export default function Attendance() {
             : "عمل";
       const status = isFriday
         ? (attendedFriday ? "حضور" : "إجازة")
-        : record.status === "Absent"
-          ? "غياب"
-          : isCompDay
-            ? "إجازة"
-            : "حضور";
+        : record.status === "Late"
+          ? "تأخير"
+          : record.status === "Absent"
+            ? "غياب"
+            : isCompDay
+              ? "إجازة"
+              : "حضور";
 
       let lateValue = "";
       let earlyLeaveValue = "";
       let missingStampValue = "";
       let absenceValue = "";
       let totalPenalties = "";
+      const notesTokens: string[] = [];
       const hasPenalties = Array.isArray(record.penalties) && record.penalties.length > 0;
 
-      if (!isFriday) {
+      if (!isFriday && hasPenalties) {
         let penaltySum = 0;
-        if (hasPenalties) {
-          record.penalties.forEach((penalty: any) => {
-            const value = Number(penalty.value);
-            if (!Number.isFinite(value)) return;
-            penaltySum += value;
-            if (penalty.type === "تأخير") {
-              lateValue = value;
-            } else if (penalty.type === "انصراف مبكر") {
-              earlyLeaveValue = value;
-            } else if (penalty.type === "سهو بصمة") {
-              missingStampValue = value;
-            } else if (penalty.type === "غياب") {
-              absenceValue = value;
-            }
-          });
-        }
+        record.penalties.forEach((penalty: any) => {
+          const value = Number(penalty.value);
+          if (!Number.isFinite(value)) return;
+          penaltySum += value;
+          if (penalty.type === "تأخير") {
+            lateValue = value;
+            notesTokens.push("تأخير");
+          } else if (penalty.type === "انصراف مبكر") {
+            earlyLeaveValue = value;
+            notesTokens.push("انصراف مبكر");
+          } else if (penalty.type === "سهو بصمة") {
+            missingStampValue = value;
+            notesTokens.push("سهو بصمة");
+          } else if (penalty.type === "غياب") {
+            absenceValue = value;
+            notesTokens.push("غياب");
+          }
+        });
         if (penaltySum > 0) {
           totalPenalties = penaltySum;
         }
       }
 
+      const notes = notesTokens.length > 0
+        ? Array.from(new Set(notesTokens)).join(" + ")
+        : (record.notes || "").replace(/[\r\n]+/g, " ").trim();
+
       const detailRow = [
-        record.employeeCode,
-        employeeMap.get(record.employeeCode) || "",
         dateObj,
-        dayNames[dayIndex],
-        record.checkIn ? toExcelTime(new Date(record.checkIn)) : "",
-        record.checkOut ? toExcelTime(new Date(record.checkOut)) : "",
+        `${employeeMap.get(record.employeeCode) || ""} / ${record.employeeCode}`,
+        record.checkIn ? toExcelTime(new Date(record.checkIn)) : "-",
+        record.checkOut ? toExcelTime(new Date(record.checkOut)) : "-",
+        typeof record.totalHours === "number" ? Number(record.totalHours.toFixed(2)) : "-",
+        record.overtimeHours && record.overtimeHours > 0 ? Number(record.overtimeHours.toFixed(2)) : "-",
         dayType,
-        isFriday && attendedFriday ? 1 : "",
         status,
-        lateValue,
-        earlyLeaveValue,
-        missingStampValue,
-        absenceValue,
-        totalPenalties,
-        record.notes || "",
+        lateValue === 0 ? "" : lateValue,
+        earlyLeaveValue === 0 ? "" : earlyLeaveValue,
+        missingStampValue === 0 ? "" : missingStampValue,
+        absenceValue === 0 ? "" : absenceValue,
+        totalPenalties === 0 ? "" : totalPenalties,
+        notes,
       ];
 
       detailRows.push(detailRow);
@@ -336,9 +336,9 @@ export default function Attendance() {
     const summarySheet = XLSX.utils.aoa_to_sheet(summaryRows);
 
     detailSheet["!cols"] = [
-      { wch: 10 }, { wch: 20 }, { wch: 12 }, { wch: 12 }, { wch: 12 },
-      { wch: 12 }, { wch: 14 }, { wch: 12 }, { wch: 10 }, { wch: 10 },
-      { wch: 12 }, { wch: 10 }, { wch: 8 }, { wch: 14 }, { wch: 24 },
+      { wch: 12 }, { wch: 24 }, { wch: 10 }, { wch: 10 }, { wch: 12 },
+      { wch: 10 }, { wch: 14 }, { wch: 10 }, { wch: 10 }, { wch: 12 },
+      { wch: 10 }, { wch: 8 }, { wch: 14 }, { wch: 30 },
     ];
 
     summarySheet["!cols"] = [
@@ -349,41 +349,61 @@ export default function Attendance() {
 
     for (let rowIndex = 1; rowIndex < detailRows.length; rowIndex += 1) {
       const isFridayRow = detailRows[rowIndex][6] === "جمعة";
-      const hasViolation = detailRows[rowIndex][9] !== "" ||
+      const hasViolation = detailRows[rowIndex][8] !== "" ||
+        detailRows[rowIndex][9] !== "" ||
         detailRows[rowIndex][10] !== "" ||
-        detailRows[rowIndex][11] !== "" ||
-        detailRows[rowIndex][12] !== "";
+        detailRows[rowIndex][11] !== "";
       const fill = isFridayRow
         ? "D9E8FF"
         : hasViolation
           ? "FFE5E5"
-          : "E7F7E7";
+          : undefined;
       for (let colIndex = 0; colIndex < detailHeaders.length; colIndex += 1) {
         const cellAddress = XLSX.utils.encode_cell({ r: rowIndex, c: colIndex });
         const cell = detailSheet[cellAddress];
         if (!cell) continue;
-        cell.s = {
-          fill: { patternType: "solid", fgColor: { rgb: fill } },
-        };
+        if (fill) {
+          cell.s = {
+            fill: { patternType: "solid", fgColor: { rgb: fill } },
+          };
+        }
       }
     }
 
     for (let rowIndex = 1; rowIndex < detailRows.length; rowIndex += 1) {
-      const dateCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: 2 })];
+      const dateCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: 0 })];
       if (dateCell) {
         dateCell.t = "d";
         dateCell.z = "yyyy-mm-dd";
       }
-      const checkInCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: 4 })];
-      if (checkInCell) {
+      const checkInCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: 2 })];
+      if (checkInCell && checkInCell.v !== "-") {
         checkInCell.t = "n";
         checkInCell.z = "hh:mm";
       }
-      const checkOutCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: 5 })];
-      if (checkOutCell) {
+      const checkOutCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: 3 })];
+      if (checkOutCell && checkOutCell.v !== "-") {
         checkOutCell.t = "n";
         checkOutCell.z = "hh:mm";
       }
+      const hoursCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: 4 })];
+      if (hoursCell && hoursCell.v !== "-") {
+        hoursCell.t = "n";
+        hoursCell.z = "0.00";
+      }
+      const overtimeCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: 5 })];
+      if (overtimeCell && overtimeCell.v !== "-") {
+        overtimeCell.t = "n";
+        overtimeCell.z = "0.00";
+      }
+      const penaltyColumns = [8, 9, 10, 11, 12];
+      penaltyColumns.forEach((colIndex) => {
+        const penaltyCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: colIndex })];
+        if (penaltyCell && penaltyCell.v !== "") {
+          penaltyCell.t = "n";
+          penaltyCell.z = "0.00";
+        }
+      });
     }
 
     XLSX.utils.book_append_sheet(workbook, detailSheet, "تفصيلي");
