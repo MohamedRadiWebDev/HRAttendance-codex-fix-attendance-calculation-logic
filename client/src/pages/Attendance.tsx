@@ -341,7 +341,7 @@ export default function Attendance() {
         summary.totalLate,
         summary.totalEarlyLeave,
         summary.totalMissingStamp,
-        summary.totalAbsencePenalty,
+        summary.absenceDays * 2,
         summary.totalPenalties,
       ]);
     });
