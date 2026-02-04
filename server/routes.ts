@@ -293,6 +293,16 @@ export async function registerRoutes(
             currentShiftEnd = (shiftRule.params as any).shiftEnd || currentShiftEnd;
           }
 
+          const isFriday = d.getUTCDay() === 5;
+          const leaveRule = activeRules.find(r => r.ruleType === "attendance_exempt");
+          const leaveTypeRaw = typeof (leaveRule?.params as any)?.leaveType === "string"
+            ? String((leaveRule?.params as any)?.leaveType).toLowerCase()
+            : "";
+          const leaveCategory = leaveRule
+            ? (leaveTypeRaw === "official" ? "Official Leave" : "HR Leave")
+            : null;
+          const isLeaveDay = Boolean(leaveRule);
+
           // 3. Check for adjustments (excel + manual)
           const dayAdjustments = adjustmentsByEmployeeDate.get(`${employee.code}__${dateStr}`) || [];
 
@@ -309,12 +319,37 @@ export async function registerRoutes(
             return `${py}-${pm}-${pd}` === dateStr;
           }).sort((a, b) => a.punchDatetime.getTime() - b.punchDatetime.getTime());
 
-          if (dayPunches.length > 0 || dayAdjustments.length > 0) {
-            const checkIn = dayPunches.length > 0 ? dayPunches[0].punchDatetime : null;
-            const checkOut = dayPunches.length > 1 ? dayPunches[dayPunches.length - 1].punchDatetime : null;
+          const checkIn = dayPunches.length > 0 ? dayPunches[0].punchDatetime : null;
+          const checkOut = dayPunches.length > 1 ? dayPunches[dayPunches.length - 1].punchDatetime : null;
+          const checkInLocal = checkIn ? toLocal(checkIn) : null;
+          const checkOutLocal = checkOut ? toLocal(checkOut) : null;
 
-            const checkInLocal = checkIn ? toLocal(checkIn) : null;
-            const checkOutLocal = checkOut ? toLocal(checkOut) : null;
+          let totalHours = 0;
+          if (checkInLocal && checkOutLocal) {
+            totalHours = (checkOutLocal.getTime() - checkInLocal.getTime()) / (1000 * 60 * 60);
+          }
+
+          if (isFriday || isLeaveDay) {
+            await storage.createAttendanceRecord({
+              employeeCode: employee.code,
+              date: dateStr,
+              checkIn,
+              checkOut,
+              totalHours,
+              status: isFriday ? "Friday" : "Comp Day",
+              overtimeHours: 0,
+              penalties: [],
+              isOvernight: false,
+              notes: isLeaveDay ? leaveCategory : null,
+              missionStart: null,
+              missionEnd: null,
+              halfDayExcused: false,
+            });
+            processedCount++;
+            continue;
+          }
+
+          if (dayPunches.length > 0 || dayAdjustments.length > 0) {
             const checkInSeconds = checkInLocal
               ? checkInLocal.getUTCHours() * 3600 + checkInLocal.getUTCMinutes() * 60 + checkInLocal.getUTCSeconds()
               : null;
@@ -361,7 +396,6 @@ export async function registerRoutes(
 
             const firstStampSeconds = adjustmentEffects.firstStampSeconds;
             const lastStampSeconds = adjustmentEffects.lastStampSeconds;
-            let totalHours = 0;
             if (firstStampSeconds !== null && lastStampSeconds !== null) {
               const firstStampUTC = toUtcFromSeconds(firstStampSeconds);
               const lastStampUTC = toUtcFromSeconds(lastStampSeconds);
@@ -446,7 +480,7 @@ export async function registerRoutes(
               status,
               overtimeHours,
               penalties,
-              isOvernight: activeRules.some(r => r.ruleType === 'overtime_overnight'),
+              isOvernight: false,
               notes: autoNotes || null,
               missionStart,
               missionEnd,
