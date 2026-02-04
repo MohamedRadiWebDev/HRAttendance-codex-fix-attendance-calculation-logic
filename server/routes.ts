@@ -330,13 +330,24 @@ export async function registerRoutes(
           }
 
           if (isFriday || isLeaveDay) {
+            // Friday attendance windows are validation-only (11:00-16:00 or 12:00-17:00), not shift changes.
+            const attendedFriday = isFriday && dayPunches.some((punch) => {
+              const localPunch = toLocal(punch.punchDatetime);
+              const seconds = localPunch.getUTCHours() * 3600 + localPunch.getUTCMinutes() * 60 + localPunch.getUTCSeconds();
+              const windowAStart = 11 * 3600;
+              const windowAEnd = 16 * 3600;
+              const windowBStart = 12 * 3600;
+              const windowBEnd = 17 * 3600;
+              return (seconds >= windowAStart && seconds <= windowAEnd)
+                || (seconds >= windowBStart && seconds <= windowBEnd);
+            });
             await storage.createAttendanceRecord({
               employeeCode: employee.code,
               date: dateStr,
               checkIn,
               checkOut,
-              totalHours,
-              status: isFriday ? "Friday" : "Comp Day",
+              totalHours: isFriday ? 0 : totalHours,
+              status: isFriday ? (attendedFriday ? "Friday Attended" : "Friday") : "Comp Day",
               overtimeHours: 0,
               penalties: [],
               isOvernight: false,
