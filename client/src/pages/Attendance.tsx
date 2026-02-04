@@ -224,11 +224,9 @@ export default function Attendance() {
       const hasPenalties = Array.isArray(record.penalties) && record.penalties.length > 0;
 
       if (!isFriday && hasPenalties) {
-        let penaltySum = 0;
         record.penalties.forEach((penalty: any) => {
           const value = Number(penalty.value);
           if (!Number.isFinite(value)) return;
-          penaltySum += value;
           if (penalty.type === "تأخير") {
             lateValue = value;
             notesTokens.push("تأخير");
@@ -243,8 +241,13 @@ export default function Attendance() {
             notesTokens.push("غياب");
           }
         });
-        if (penaltySum > 0) {
-          totalPenalties = penaltySum;
+        const computedPenaltySum =
+          (typeof lateValue === "number" ? lateValue : 0) +
+          (typeof earlyLeaveValue === "number" ? earlyLeaveValue : 0) +
+          (typeof missingStampValue === "number" ? missingStampValue : 0) +
+          (typeof absenceValue === "number" ? absenceValue * 2 : 0);
+        if (computedPenaltySum > 0) {
+          totalPenalties = computedPenaltySum;
         }
       }
 
@@ -300,7 +303,7 @@ export default function Attendance() {
         record.penalties.forEach((penalty: any) => {
           const value = Number(penalty.value);
           if (!Number.isFinite(value)) return;
-          summary.totalPenalties += value;
+        summary.totalPenalties += value;
           if (penalty.type === "تأخير") summary.totalLate += value;
           if (penalty.type === "انصراف مبكر") summary.totalEarlyLeave += value;
           if (penalty.type === "سهو بصمة") summary.totalMissingStamp += value;
@@ -329,6 +332,8 @@ export default function Attendance() {
 
     const summaryRows: any[][] = [summaryHeaders];
     Array.from(summaryByEmployee.values()).forEach((summary) => {
+      const summaryAbsenceTotal = summary.absenceDays * 2;
+      const summaryPenaltiesTotal = summary.totalLate + summary.totalEarlyLeave + summary.totalMissingStamp + summaryAbsenceTotal;
       summaryRows.push([
         summary.code,
         summary.name,
@@ -341,8 +346,8 @@ export default function Attendance() {
         summary.totalLate,
         summary.totalEarlyLeave,
         summary.totalMissingStamp,
-        summary.absenceDays * 2,
-        summary.totalPenalties,
+        summaryAbsenceTotal,
+        summaryPenaltiesTotal,
       ]);
     });
 
