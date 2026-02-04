@@ -142,9 +142,13 @@ export default function Attendance() {
       return seconds / 86400;
     };
 
+    const dayNames = ["أحد", "اثنين", "ثلاثاء", "أربعاء", "خميس", "جمعة", "سبت"];
+
     const detailHeaders = [
       "التاريخ",
-      "الموظف / الكود",
+      "اليوم",
+      "الكود",
+      "اسم الموظف",
       "الدخول",
       "الخروج",
       "ساعات العمل",
@@ -241,7 +245,9 @@ export default function Attendance() {
 
       const detailRow = [
         dateObj,
-        `${employeeMap.get(record.employeeCode) || ""} / ${record.employeeCode}`,
+        dayNames[dayIndex],
+        record.employeeCode,
+        employeeMap.get(record.employeeCode) || "",
         record.checkIn ? toExcelTime(new Date(record.checkIn)) : "-",
         record.checkOut ? toExcelTime(new Date(record.checkOut)) : "-",
         typeof record.totalHours === "number" ? Number(record.totalHours.toFixed(2)) : "-",
@@ -336,9 +342,10 @@ export default function Attendance() {
     const summarySheet = XLSX.utils.aoa_to_sheet(summaryRows);
 
     detailSheet["!cols"] = [
-      { wch: 12 }, { wch: 24 }, { wch: 10 }, { wch: 10 }, { wch: 12 },
-      { wch: 10 }, { wch: 14 }, { wch: 10 }, { wch: 10 }, { wch: 12 },
-      { wch: 10 }, { wch: 8 }, { wch: 14 }, { wch: 30 },
+      { wch: 12 }, { wch: 10 }, { wch: 10 }, { wch: 20 }, { wch: 10 },
+      { wch: 10 }, { wch: 12 }, { wch: 10 }, { wch: 14 }, { wch: 10 },
+      { wch: 10 }, { wch: 12 }, { wch: 10 }, { wch: 8 }, { wch: 14 },
+      { wch: 30 },
     ];
 
     summarySheet["!cols"] = [
@@ -348,16 +355,13 @@ export default function Attendance() {
     ];
 
     for (let rowIndex = 1; rowIndex < detailRows.length; rowIndex += 1) {
-      const isFridayRow = detailRows[rowIndex][6] === "جمعة";
-      const hasViolation = detailRows[rowIndex][8] !== "" ||
-        detailRows[rowIndex][9] !== "" ||
-        detailRows[rowIndex][10] !== "" ||
-        detailRows[rowIndex][11] !== "";
+      const isFridayRow = detailRows[rowIndex][8] === "جمعة";
+      const hasViolation = detailRows[rowIndex][14] !== "";
       const fill = isFridayRow
         ? "D9E8FF"
         : hasViolation
           ? "FFE5E5"
-          : undefined;
+          : "E7F7E7";
       for (let colIndex = 0; colIndex < detailHeaders.length; colIndex += 1) {
         const cellAddress = XLSX.utils.encode_cell({ r: rowIndex, c: colIndex });
         const cell = detailSheet[cellAddress];
@@ -376,27 +380,27 @@ export default function Attendance() {
         dateCell.t = "d";
         dateCell.z = "yyyy-mm-dd";
       }
-      const checkInCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: 2 })];
+      const checkInCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: 4 })];
       if (checkInCell && checkInCell.v !== "-") {
         checkInCell.t = "n";
         checkInCell.z = "hh:mm";
       }
-      const checkOutCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: 3 })];
+      const checkOutCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: 5 })];
       if (checkOutCell && checkOutCell.v !== "-") {
         checkOutCell.t = "n";
         checkOutCell.z = "hh:mm";
       }
-      const hoursCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: 4 })];
+      const hoursCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: 6 })];
       if (hoursCell && hoursCell.v !== "-") {
         hoursCell.t = "n";
         hoursCell.z = "0.00";
       }
-      const overtimeCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: 5 })];
+      const overtimeCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: 7 })];
       if (overtimeCell && overtimeCell.v !== "-") {
         overtimeCell.t = "n";
         overtimeCell.z = "0.00";
       }
-      const penaltyColumns = [8, 9, 10, 11, 12];
+      const penaltyColumns = [10, 11, 12, 13, 14];
       penaltyColumns.forEach((colIndex) => {
         const penaltyCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: colIndex })];
         if (penaltyCell && penaltyCell.v !== "") {
