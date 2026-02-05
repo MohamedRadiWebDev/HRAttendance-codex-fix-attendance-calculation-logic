@@ -135,9 +135,297 @@ export default function Attendance() {
 
   const handleExport = () => {
     if (!records || records.length === 0) return;
-    const worksheet = XLSX.utils.json_to_sheet(records);
+    const employeeMap = new Map((employees || []).map(emp => [emp.code, emp.nameAr]));
+
+    const toExcelTime = (value: Date) => {
+      const seconds = value.getHours() * 3600 + value.getMinutes() * 60 + value.getSeconds();
+      return seconds / 86400;
+    };
+
+    const dayNames = ["أحد", "اثنين", "ثلاثاء", "أربعاء", "خميس", "جمعة", "سبت"];
+
+    const detailHeaders = [
+      "التاريخ",
+      "اليوم",
+      "الكود",
+      "اسم الموظف",
+      "الدخول",
+      "الخروج",
+      "ساعات العمل",
+      "الإضافي",
+      "نوع اليوم",
+      "الحالة",
+      "تأخير",
+      "انصراف مبكر",
+      "سهو بصمة",
+      "غياب",
+      "إجمالي الجزاءات",
+      "ملاحظات",
+    ];
+
+    const detailRows: any[][] = [detailHeaders];
+
+    const summaryByEmployee = new Map<string, {
+      code: string;
+      name: string;
+      workDays: number;
+      fridays: number;
+      fridayAttendance: number;
+      officialLeaves: number;
+      hrLeaves: number;
+      absenceDays: number;
+      totalLate: number;
+      totalEarlyLeave: number;
+      totalMissingStamp: number;
+      totalAbsencePenalty: number;
+      totalPenalties: number;
+    }>();
+
+    records.forEach((record: any) => {
+      const [yearRaw, monthRaw, dayRaw] = String(record.date || "").split("-").map(Number);
+      const year = Number.isFinite(yearRaw) ? yearRaw : 1970;
+      const monthIndex = Number.isFinite(monthRaw) ? monthRaw - 1 : 0;
+      const dayOfMonth = Number.isFinite(dayRaw) ? dayRaw : 1;
+      const dateObj = new Date(year, monthIndex, dayOfMonth);
+      const dayIndex = dateObj.getDay();
+      const exportedDateString = `${String(year).padStart(4, "0")}-${String(monthIndex + 1).padStart(2, "0")}-${String(dayOfMonth).padStart(2, "0")}`;
+      if (process.env.NODE_ENV === "development" && exportedDateString !== record.date) {
+        console.error("Export date mismatch", { recordId: record.id, recordDate: record.date, exportedDateString });
+      }
+      const excelDateSerial = (Date.UTC(year, monthIndex, dayOfMonth) - Date.UTC(1899, 11, 30)) / 86400000;
+      const isFriday = dayIndex === 5;
+      const attendedFriday = record.status === "Friday Attended";
+      const isCompDay = record.status === "Comp Day";
+      const isOfficialLeave = isCompDay && record.notes === "Official Leave";
+      const isHrLeave = isCompDay && !isOfficialLeave;
+      const dayType = isFriday
+        ? "جمعة"
+        : isOfficialLeave
+          ? "إجازة رسمية"
+          : isHrLeave
+            ? "إجازة"
+            : "عمل";
+      const status = isFriday
+        ? (attendedFriday ? "حضور" : "إجازة")
+        : record.status === "Late"
+          ? "تأخير"
+          : record.status === "Absent"
+            ? "غياب"
+            : isCompDay
+              ? "إجازة"
+              : "حضور";
+
+      let lateValue = "";
+      let earlyLeaveValue = "";
+      let missingStampValue = "";
+      let absenceValue = "";
+      let totalPenalties = "";
+      const notesTokens: string[] = [];
+      const hasPenalties = Array.isArray(record.penalties) && record.penalties.length > 0;
+
+      if (!isFriday && hasPenalties) {
+        record.penalties.forEach((penalty: any) => {
+          const value = Number(penalty.value);
+          if (!Number.isFinite(value)) return;
+          if (penalty.type === "تأخير") {
+            lateValue = value;
+            notesTokens.push("تأخير");
+          } else if (penalty.type === "انصراف مبكر") {
+            earlyLeaveValue = value;
+            notesTokens.push("انصراف مبكر");
+          } else if (penalty.type === "سهو بصمة") {
+            missingStampValue = value;
+            notesTokens.push("سهو بصمة");
+          } else if (penalty.type === "غياب") {
+            absenceValue = value;
+            notesTokens.push("غياب");
+          }
+        });
+        const computedPenaltySum =
+          (typeof lateValue === "number" ? lateValue : 0) +
+          (typeof earlyLeaveValue === "number" ? earlyLeaveValue : 0) +
+          (typeof missingStampValue === "number" ? missingStampValue : 0) +
+          (typeof absenceValue === "number" ? absenceValue * 2 : 0);
+        if (computedPenaltySum > 0) {
+          totalPenalties = computedPenaltySum;
+        }
+      }
+
+      const notes = notesTokens.length > 0
+        ? Array.from(new Set(notesTokens)).join(" + ")
+        : (record.notes || "").replace(/[\r\n]+/g, " ").trim();
+
+      const detailRow = [
+        excelDateSerial,
+        dayNames[dayIndex],
+        record.employeeCode,
+        employeeMap.get(record.employeeCode) || "(غير موجود بالماستر)",
+        record.checkIn ? toExcelTime(new Date(record.checkIn)) : "-",
+        record.checkOut ? toExcelTime(new Date(record.checkOut)) : "-",
+        typeof record.totalHours === "number" ? Number(record.totalHours.toFixed(2)) : "-",
+        record.overtimeHours && record.overtimeHours > 0 ? Number(record.overtimeHours.toFixed(2)) : "-",
+        dayType,
+        status,
+        lateValue === 0 ? "" : lateValue,
+        earlyLeaveValue === 0 ? "" : earlyLeaveValue,
+        missingStampValue === 0 ? "" : missingStampValue,
+        absenceValue === 0 ? "" : absenceValue,
+        totalPenalties === 0 ? "" : totalPenalties,
+        notes,
+      ];
+
+      detailRows.push(detailRow);
+
+      const summary = summaryByEmployee.get(record.employeeCode) || {
+        code: record.employeeCode,
+        name: employeeMap.get(record.employeeCode) || "(غير موجود بالماستر)",
+        workDays: 0,
+        fridays: 0,
+        fridayAttendance: 0,
+        officialLeaves: 0,
+        hrLeaves: 0,
+        absenceDays: 0,
+        totalLate: 0,
+        totalEarlyLeave: 0,
+        totalMissingStamp: 0,
+        totalAbsencePenalty: 0,
+        totalPenalties: 0,
+      };
+
+      if (dayType === "عمل") summary.workDays += 1;
+      if (dayType === "جمعة") summary.fridays += 1;
+      if (isFriday && attendedFriday) summary.fridayAttendance += 1;
+      if (dayType === "إجازة رسمية") summary.officialLeaves += 1;
+      if (dayType === "إجازة") summary.hrLeaves += 1;
+      if (!isFriday && record.status === "Absent") summary.absenceDays += 1;
+
+      if (!isFriday && hasPenalties) {
+        record.penalties.forEach((penalty: any) => {
+          const value = Number(penalty.value);
+          if (!Number.isFinite(value)) return;
+        summary.totalPenalties += value;
+          if (penalty.type === "تأخير") summary.totalLate += value;
+          if (penalty.type === "انصراف مبكر") summary.totalEarlyLeave += value;
+          if (penalty.type === "سهو بصمة") summary.totalMissingStamp += value;
+          if (penalty.type === "غياب") summary.totalAbsencePenalty += value;
+        });
+      }
+
+      summaryByEmployee.set(record.employeeCode, summary);
+    });
+
+    const summaryHeaders = [
+      "الكود",
+      "الاسم",
+      "عدد أيام العمل",
+      "عدد أيام الجمعة",
+      "عدد أيام حضور الجمعة",
+      "عدد أيام الإجازات الرسمية",
+      "عدد أيام الإجازات (المحددة)",
+      "عدد أيام الغياب",
+      "إجمالي التأخيرات",
+      "إجمالي الانصراف المبكر",
+      "إجمالي سهو البصمة",
+      "إجمالي الغياب",
+      "إجمالي الجزاءات",
+    ];
+
+    const summaryRows: any[][] = [summaryHeaders];
+    Array.from(summaryByEmployee.values()).forEach((summary) => {
+      const summaryAbsenceTotal = summary.absenceDays * 2;
+      const summaryPenaltiesTotal = summary.totalLate + summary.totalEarlyLeave + summary.totalMissingStamp + summaryAbsenceTotal;
+      summaryRows.push([
+        summary.code,
+        summary.name,
+        summary.workDays,
+        summary.fridays,
+        summary.fridayAttendance,
+        summary.officialLeaves,
+        summary.hrLeaves,
+        summary.absenceDays,
+        summary.totalLate,
+        summary.totalEarlyLeave,
+        summary.totalMissingStamp,
+        summaryAbsenceTotal,
+        summaryPenaltiesTotal,
+      ]);
+    });
+
     const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, "Attendance");
+    const detailSheet = XLSX.utils.aoa_to_sheet(detailRows);
+    const summarySheet = XLSX.utils.aoa_to_sheet(summaryRows);
+
+    detailSheet["!cols"] = [
+      { wch: 12 }, { wch: 10 }, { wch: 10 }, { wch: 20 }, { wch: 10 },
+      { wch: 10 }, { wch: 12 }, { wch: 10 }, { wch: 14 }, { wch: 10 },
+      { wch: 10 }, { wch: 12 }, { wch: 10 }, { wch: 8 }, { wch: 14 },
+      { wch: 30 },
+    ];
+
+    summarySheet["!cols"] = [
+      { wch: 10 }, { wch: 20 }, { wch: 14 }, { wch: 14 }, { wch: 16 },
+      { wch: 18 }, { wch: 18 }, { wch: 14 }, { wch: 14 }, { wch: 18 },
+      { wch: 16 }, { wch: 14 }, { wch: 14 },
+    ];
+
+    for (let rowIndex = 1; rowIndex < detailRows.length; rowIndex += 1) {
+      const isFridayRow = detailRows[rowIndex][8] === "جمعة";
+      const hasViolation = detailRows[rowIndex][14] !== "";
+      const fill = isFridayRow
+        ? "D9E8FF"
+        : hasViolation
+          ? "FFE5E5"
+          : "E7F7E7";
+      for (let colIndex = 0; colIndex < detailHeaders.length; colIndex += 1) {
+        const cellAddress = XLSX.utils.encode_cell({ r: rowIndex, c: colIndex });
+        const cell = detailSheet[cellAddress];
+        if (!cell) continue;
+        if (fill) {
+          cell.s = {
+            fill: { patternType: "solid", fgColor: { rgb: fill } },
+          };
+        }
+      }
+    }
+
+    for (let rowIndex = 1; rowIndex < detailRows.length; rowIndex += 1) {
+      const dateCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: 0 })];
+      if (dateCell) {
+        dateCell.t = "n";
+        dateCell.z = "yyyy-mm-dd";
+      }
+      const checkInCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: 4 })];
+      if (checkInCell && checkInCell.v !== "-") {
+        checkInCell.t = "n";
+        checkInCell.z = "hh:mm";
+      }
+      const checkOutCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: 5 })];
+      if (checkOutCell && checkOutCell.v !== "-") {
+        checkOutCell.t = "n";
+        checkOutCell.z = "hh:mm";
+      }
+      const hoursCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: 6 })];
+      if (hoursCell && hoursCell.v !== "-") {
+        hoursCell.t = "n";
+        hoursCell.z = "0.00";
+      }
+      const overtimeCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: 7 })];
+      if (overtimeCell && overtimeCell.v !== "-") {
+        overtimeCell.t = "n";
+        overtimeCell.z = "0.00";
+      }
+      const penaltyColumns = [10, 11, 12, 13, 14];
+      penaltyColumns.forEach((colIndex) => {
+        const penaltyCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: colIndex })];
+        if (penaltyCell && penaltyCell.v !== "") {
+          penaltyCell.t = "n";
+          penaltyCell.z = "0.00";
+        }
+      });
+    }
+
+    XLSX.utils.book_append_sheet(workbook, detailSheet, "تفصيلي");
+    XLSX.utils.book_append_sheet(workbook, summarySheet, "ملخص");
     XLSX.writeFile(workbook, `Attendance_${dateRange.start}_${dateRange.end}.xlsx`);
     toast({ title: "تم التصدير", description: "تم تحميل ملف الإكسل بنجاح" });
   };
@@ -270,7 +558,7 @@ export default function Attendance() {
                           {record.overtimeHours && record.overtimeHours > 0 ? `+${record.overtimeHours.toFixed(2)}` : "-"}
                         </td>
                         <td className="px-6 py-4">
-                          <StatusBadge status={record.status} isOvernight={record.isOvernight} />
+                          <StatusBadge status={record.status} />
                         </td>
                         <td className="px-6 py-4">
                           <div className="flex flex-col gap-1">
@@ -337,12 +625,15 @@ export default function Attendance() {
   );
 }
 
-function StatusBadge({ status, isOvernight }: { status: string | null, isOvernight: boolean | null }) {
+function StatusBadge({ status }: { status: string | null }) {
   const styles: Record<string, string> = {
     "Present": "status-present",
     "Absent": "status-absent",
     "Late": "status-late",
     "Excused": "status-excused",
+    "Friday": "bg-amber-100 text-amber-700 border-amber-200",
+    "Friday Attended": "bg-amber-100 text-amber-700 border-amber-200",
+    "Comp Day": "bg-emerald-100 text-emerald-700 border-emerald-200",
   };
   
   const labels: Record<string, string> = {
@@ -350,6 +641,9 @@ function StatusBadge({ status, isOvernight }: { status: string | null, isOvernig
     "Absent": "غياب",
     "Late": "تأخير",
     "Excused": "مأذون",
+    "Friday": "جمعة",
+    "Friday Attended": "جمعة (حضور)",
+    "Comp Day": "يوم بالبدل",
   };
 
   const baseStyle = styles[status || ""] || "bg-slate-100 text-slate-600";
@@ -360,11 +654,6 @@ function StatusBadge({ status, isOvernight }: { status: string | null, isOvernig
       <span className={cn("px-2.5 py-0.5 rounded-full text-xs font-bold border", baseStyle)}>
         {label}
       </span>
-      {isOvernight && (
-        <span className="text-xs bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded border border-indigo-200">
-          ليلي
-        </span>
-      )}
     </div>
   );
 }
