@@ -4,7 +4,18 @@ import { storage } from "./storage";
 import { api } from "@shared/routes";
 import { z } from "zod";
 import { insertEmployeeSchema, insertTemplateSchema, insertRuleSchema, insertAdjustmentSchema, ADJUSTMENT_TYPES } from "@shared/schema";
-import { appendNotes, computeAdjustmentEffects, computeAutomaticNotes, computePenaltyEntries, normalizeTimeToHms, secondsToHms, timeStringToSeconds } from "./attendance-utils";
+import {
+  buildPunchConsumptionKey,
+  composeDailyNotes,
+  computeAdjustmentEffects,
+  computeAutomaticNotes,
+  computePenaltyEntries,
+  filterConsumedPunches,
+  normalizeTimeToHms,
+  secondsToHms,
+  timeStringToSeconds,
+} from "./attendance-utils";
+import { parseRuleScope } from "@shared/rule-scope";
 
 export async function registerRoutes(
   httpServer: Server,
@@ -365,6 +376,15 @@ export async function registerRoutes(
       const rules = await storage.getRules();
       const leaves = await storage.getLeaves();
       const adjustments = await storage.getAdjustments();
+
+      const scopeCache = new Map<string, ReturnType<typeof parseRuleScope>>();
+      const getParsedScope = (scope: string, cacheKey: string) => {
+        const cached = scopeCache.get(cacheKey);
+        if (cached) return cached;
+        const parsed = parseRuleScope(scope);
+        scopeCache.set(cacheKey, parsed);
+        return parsed;
+      };
       
       let processedCount = 0;
 
@@ -381,6 +401,7 @@ export async function registerRoutes(
       const endLocal = new Date(Date.UTC(endYear, endMonth - 1, endDay));
 
       for (const employee of allEmployees) {
+        const normalizedEmployeeCode = String(employee.code ?? "").trim();
         const punchesByDate = new Map<string, typeof punches>();
         punches.forEach((punch) => {
           if (punch.employeeCode !== employee.code) return;
@@ -403,6 +424,13 @@ export async function registerRoutes(
           const existing = extraNotesByKey.get(key) || [];
           existing.push(note);
           extraNotesByKey.set(key, existing);
+        };
+        const consumedPunchesByDate = new Map<string, Set<string>>();
+        const markPunchConsumed = (dateKey: string, punch: (typeof punches)[number]) => {
+          const key = buildPunchConsumptionKey(punch.employeeCode, punch.punchDatetime);
+          const existing = consumedPunchesByDate.get(dateKey) || new Set<string>();
+          existing.add(key);
+          consumedPunchesByDate.set(dateKey, existing);
         };
 
         const shiftStartHour = Number.parseInt((employee.shiftStart || "09:00").split(":")[0], 10);
@@ -497,6 +525,7 @@ export async function registerRoutes(
                 (a, b) => a.punchDatetime.getTime() - b.punchDatetime.getTime()
               );
               punchesByDate.set(prevDateStr, updatedPrevPunches);
+              markPunchConsumed(dateStr, punch);
 
               const timeLabel = `${String(localPunch.getUTCHours()).padStart(2, "0")}:${String(localPunch.getUTCMinutes()).padStart(2, "0")}`;
               addExtraNote(prevDateStr, `خروج بعد منتصف الليل ${timeLabel} (${dateStr})`);
@@ -517,7 +546,11 @@ export async function registerRoutes(
             if (r.scope === 'all') return true;
             if (r.scope.startsWith('dept:') && employee.department === r.scope.replace('dept:', '')) return true;
             if (r.scope.startsWith('sector:') && employee.sector === r.scope.replace('sector:', '')) return true;
-            if (r.scope.startsWith('emp:') && employee.code === r.scope.replace('emp:', '')) return true;
+            if (r.scope.startsWith('emp:')) {
+              const cacheKey = `${r.id ?? "no-id"}:${r.scope}`;
+              const parsedScope = getParsedScope(r.scope, cacheKey);
+              return parsedScope.type === "emp" && parsedScope.values.includes(normalizedEmployeeCode);
+            }
             return false;
           }).sort((a, b) => (b.priority || 0) - (a.priority || 0));
 
@@ -560,7 +593,8 @@ export async function registerRoutes(
 
           // Get punches for this employee on this local day
           // A punch belongs to this day if its local time matches dateStr
-          const dayPunches = (punchesByDate.get(dateStr) || [])
+          const consumedPunches = consumedPunchesByDate.get(dateStr);
+          const dayPunches = filterConsumedPunches(punchesByDate.get(dateStr) || [], consumedPunches)
             .slice()
             .sort((a, b) => a.punchDatetime.getTime() - b.punchDatetime.getTime());
 
@@ -594,7 +628,6 @@ export async function registerRoutes(
               toUtcFromSeconds(d, timeStringToSeconds(currentShiftEnd)).getTime() + 60 * 60 * 1000
             );
             const extraNotes = extraNotesByKey.get(dateStr) || [];
-            const stayNotes = hasOvernightStay ? [...extraNotes, "مبيت"] : extraNotes;
             await storage.createAttendanceRecord({
               employeeCode: employee.code,
               date: dateStr,
@@ -605,7 +638,12 @@ export async function registerRoutes(
               overtimeHours: 0,
               penalties: [],
               isOvernight: false,
-              notes: appendNotes(isLeaveDay ? leaveCategory : null, [...stayNotes, ...leaveNotes]),
+              notes: composeDailyNotes({
+                baseNotes: isLeaveDay ? leaveCategory : null,
+                extraNotes,
+                leaveNotes,
+                hasOvernightStay,
+              }),
               missionStart: null,
               missionEnd: null,
               halfDayExcused: false,
@@ -749,7 +787,6 @@ export async function registerRoutes(
             }
 
             const extraNotes = extraNotesByKey.get(dateStr) || [];
-            const stayNotes = hasOvernightStay ? [...extraNotes, "مبيت"] : extraNotes;
             const recordCheckOut = hasOvernightStay ? null : checkOut;
             await storage.createAttendanceRecord({
               employeeCode: employee.code,
@@ -761,7 +798,12 @@ export async function registerRoutes(
               overtimeHours,
               penalties,
               isOvernight: false,
-              notes: appendNotes(autoNotes || null, [...stayNotes, ...leaveNotes]),
+              notes: composeDailyNotes({
+                baseNotes: autoNotes || null,
+                extraNotes,
+                leaveNotes,
+                hasOvernightStay,
+              }),
               missionStart,
               missionEnd,
               halfDayExcused,
@@ -775,7 +817,6 @@ export async function registerRoutes(
   } else {
     // Absent
      const extraNotes = extraNotesByKey.get(dateStr) || [];
-     const stayNotes = hasOvernightStay ? [...extraNotes, "مبيت"] : extraNotes;
      await storage.createAttendanceRecord({
       employeeCode: employee.code,
       date: dateStr,
@@ -786,7 +827,12 @@ export async function registerRoutes(
       penalties: [{ type: "غياب", value: 1 }],
       overtimeHours: 0,
       isOvernight: false,
-      notes: appendNotes(null, [...stayNotes, ...leaveNotes]),
+      notes: composeDailyNotes({
+        baseNotes: null,
+        extraNotes,
+        leaveNotes,
+        hasOvernightStay,
+      }),
       missionStart: null,
       missionEnd: null,
       halfDayExcused: false,

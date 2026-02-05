@@ -15,6 +15,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useForm } from "react-hook-form";
 import { format, parse } from "date-fns";
 import { zodResolver } from "@hookform/resolvers/zod";
+import { buildEmpScope, parseRuleScope } from "@shared/rule-scope";
 import { insertRuleSchema, RULE_TYPES, type SpecialRule } from "@shared/schema";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 
@@ -180,8 +181,18 @@ function AddRuleDialog({ rule }: { rule?: SpecialRule }) {
       params: { shiftStart: "09:00", shiftEnd: "17:00" }
     }
   });
+  const params = form.watch("params") as any;
 
   const onSubmit = (data: any) => {
+    const parsedScope = parseRuleScope(data.scope);
+    if (parsedScope.type === "emp") {
+      if (parsedScope.values.length === 0) {
+        form.setError("scope", { message: "يرجى إدخال كود موظف واحد على الأقل." });
+        toast({ title: "خطأ", description: "يرجى إدخال كود موظف واحد على الأقل.", variant: "destructive" });
+        return;
+      }
+      data.scope = buildEmpScope(parsedScope.values);
+    }
     const parseDateInput = (value: string) => {
       if (!value) return null;
       const parts = value.split("/");
@@ -311,10 +322,9 @@ function AddRuleDialog({ rule }: { rule?: SpecialRule }) {
               control={form.control}
               name="scope"
               render={({ field }) => {
-                const isSect = typeof field.value === 'string' && field.value.startsWith('sector:');
-                const isDept = typeof field.value === 'string' && field.value.startsWith('dept:');
-                const isEmp = typeof field.value === 'string' && field.value.startsWith('emp:');
-                const scopeType = isSect ? 'sector' : (isDept ? 'dept' : (isEmp ? 'emp' : 'all'));
+                const parsedScope = parseRuleScope(field.value);
+                const scopeType = parsedScope.type;
+                const empValues = parsedScope.type === "emp" ? parsedScope.values : [];
                 
                 return (
                   <FormItem>
@@ -325,7 +335,7 @@ function AddRuleDialog({ rule }: { rule?: SpecialRule }) {
                         else if (val === 'sector') field.onChange('sector:');
                         else if (val === 'dept') field.onChange('dept:');
                         else field.onChange('emp:');
-                      }} 
+                      }}
                       value={scopeType}
                     >
                       <FormControl>
@@ -405,9 +415,8 @@ function AddRuleDialog({ rule }: { rule?: SpecialRule }) {
                         </div>
                         <Select
                           onValueChange={(val) => {
-                            const existing = field.value.replace('emp:', '').split(',').map(v => v.trim()).filter(Boolean);
-                            if (!existing.includes(val)) {
-                              field.onChange(`emp:${[...existing, val].join(',')}`);
+                            if (!empValues.includes(val)) {
+                              field.onChange(buildEmpScope([...empValues, val]));
                             }
                           }}
                         >
@@ -424,8 +433,11 @@ function AddRuleDialog({ rule }: { rule?: SpecialRule }) {
                         </Select>
                         <Input 
                           placeholder="اكتب الأكواد: 101,102" 
-                          value={field.value.replace('emp:', '')}
-                          onChange={(e) => field.onChange(`emp:${e.target.value}`)}
+                          value={empValues.join(",")}
+                          onChange={(e) => {
+                            const values = e.target.value.split(",").map((value) => value.trim()).filter(Boolean);
+                            field.onChange(buildEmpScope(values));
+                          }}
                         />
                       </div>
                     )}
@@ -439,17 +451,25 @@ function AddRuleDialog({ rule }: { rule?: SpecialRule }) {
               <div className="grid grid-cols-2 gap-4 border p-3 rounded-lg bg-slate-50">
                 <div className="space-y-2">
                   <label className="text-xs font-bold">بداية الوردية</label>
-                  <Input type="time" onChange={(e) => {
-                    const current = form.getValues("params") as any;
-                    form.setValue("params", { ...current, shiftStart: e.target.value });
-                  }} defaultValue="09:00" />
+                  <Input
+                    type="time"
+                    value={params?.shiftStart ?? "09:00"}
+                    onChange={(e) => {
+                      const current = form.getValues("params") as any;
+                      form.setValue("params", { ...current, shiftStart: e.target.value });
+                    }}
+                  />
                 </div>
                 <div className="space-y-2">
                   <label className="text-xs font-bold">نهاية الوردية</label>
-                  <Input type="time" onChange={(e) => {
-                    const current = form.getValues("params") as any;
-                    form.setValue("params", { ...current, shiftEnd: e.target.value });
-                  }} defaultValue="17:00" />
+                  <Input
+                    type="time"
+                    value={params?.shiftEnd ?? "17:00"}
+                    onChange={(e) => {
+                      const current = form.getValues("params") as any;
+                      form.setValue("params", { ...current, shiftEnd: e.target.value });
+                    }}
+                  />
                 </div>
               </div>
             )}
