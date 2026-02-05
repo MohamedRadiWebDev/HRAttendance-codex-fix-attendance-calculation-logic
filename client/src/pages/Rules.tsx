@@ -273,6 +273,7 @@ function AddRuleDialog({ rule }: { rule?: SpecialRule }) {
                         <SelectItem value="custom_shift">وردية مخصصة</SelectItem>
                         <SelectItem value="attendance_exempt">إعفاء من البصمة</SelectItem>
                         <SelectItem value="overtime_overnight">وردية ليلية</SelectItem>
+                        <SelectItem value="overnight_stay">مبيت</SelectItem>
                       </SelectContent>
                     </Select>
                     <FormMessage />

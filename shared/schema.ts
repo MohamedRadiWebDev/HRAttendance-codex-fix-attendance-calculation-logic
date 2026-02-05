@@ -5,7 +5,7 @@ import { z } from "zod";
 // Enums
 export const LEAVE_TYPES = ["annual", "sick", "unpaid", "mission", "permission"] as const;
 export const ADJUSTMENT_TYPES = ["اذن صباحي", "اذن مسائي", "إجازة نص يوم", "مأمورية"] as const;
-export const RULE_TYPES = ["custom_shift", "attendance_exempt", "penalty_override", "ignore_biometric", "overtime_overnight"] as const;
+export const RULE_TYPES = ["custom_shift", "attendance_exempt", "penalty_override", "ignore_biometric", "overtime_overnight", "overnight_stay"] as const;
 export const PENALTY_TYPES = ["late_arrival", "early_leave", "missing_stamp", "absence"] as const;
 
 export const employees = pgTable("employees", {
@@ -101,6 +101,17 @@ export const attendanceRecords = pgTable("attendance_records", {
   halfDayExcused: boolean("half_day_excused").default(false),
 });
 
+export const leaves = pgTable("leaves", {
+  id: serial("id").primaryKey(),
+  type: text("type").notNull(), // official | collections
+  scope: text("scope").notNull(), // all | sector | department | section | branch | emp
+  scopeValue: text("scope_value"),
+  startDate: text("start_date").notNull(), // YYYY-MM-DD
+  endDate: text("end_date").notNull(), // YYYY-MM-DD
+  note: text("note"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
 export const auditLogs = pgTable("audit_logs", {
   id: serial("id").primaryKey(),
   employeeCode: text("employee_code").notNull(),
@@ -117,6 +128,7 @@ export const insertTemplateSchema = createInsertSchema(excelTemplates).omit({ id
 export const insertRuleSchema = createInsertSchema(specialRules).omit({ id: true });
 export const insertAdjustmentSchema = createInsertSchema(adjustments).omit({ id: true });
 export const insertAttendanceSchema = createInsertSchema(attendanceRecords).omit({ id: true });
+export const insertLeaveSchema = createInsertSchema(leaves).omit({ id: true });
 
 // Types
 export type Employee = typeof employees.$inferSelect;
@@ -133,6 +145,9 @@ export type InsertAdjustment = z.infer<typeof insertAdjustmentSchema>;
 
 export type AttendanceRecord = typeof attendanceRecords.$inferSelect;
 export type InsertAttendanceRecord = z.infer<typeof insertAttendanceSchema>;
+
+export type Leave = typeof leaves.$inferSelect;
+export type InsertLeave = z.infer<typeof insertLeaveSchema>;
 
 export type BiometricPunch = typeof biometricPunches.$inferSelect;
 export type InsertBiometricPunch = z.infer<typeof insertPunchSchema>;

@@ -4,7 +4,9 @@ import {
   excelTemplates, type Template, type InsertTemplate,
   specialRules, type SpecialRule, type InsertSpecialRule,
   adjustments, type Adjustment, type InsertAdjustment,
-  attendanceRecords, type AttendanceRecord, type InsertAttendanceRecord
+  attendanceRecords, type AttendanceRecord, type InsertAttendanceRecord,
+  leaves, type Leave, type InsertLeave,
+  auditLogs
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, and, gte, lte, inArray, sql, desc } from "drizzle-orm";
@@ -53,6 +55,16 @@ export interface IStorage {
   createAttendanceRecord(record: InsertAttendanceRecord): Promise<AttendanceRecord>;
   updateAttendanceRecord(id: number, record: Partial<InsertAttendanceRecord>): Promise<AttendanceRecord>;
   getAttendanceRecord(employeeCode: string, date: string): Promise<AttendanceRecord | undefined>;
+
+  // Leaves
+  getLeaves(): Promise<Leave[]>;
+  createLeave(leave: InsertLeave): Promise<Leave>;
+  deleteLeave(id: number): Promise<void>;
+  createLeavesBulk(leaves: InsertLeave[]): Promise<Leave[]>;
+
+  // Audit logs
+  getAuditLogs(filters?: { startDate?: string; endDate?: string; employeeCode?: string }): Promise<any[]>;
+  createAuditLogsBulk(entries: { employeeCode: string; date: string; action: string; details: any }[]): Promise<void>;
   
   // Bulk operations for import
   createEmployeesBulk(employees: InsertEmployee[]): Promise<Employee[]>;
@@ -70,6 +82,8 @@ export class DatabaseStorage implements IStorage {
     await db.delete(biometricPunches);
     await db.delete(employees);
     await db.delete(excelTemplates);
+    await db.delete(leaves);
+    await db.delete(auditLogs);
   }
 
   // Employees
@@ -291,6 +305,45 @@ export class DatabaseStorage implements IStorage {
       .from(attendanceRecords)
       .where(and(eq(attendanceRecords.employeeCode, employeeCode), eq(attendanceRecords.date, date)));
     return record;
+  }
+
+  // Leaves
+  async getLeaves(): Promise<Leave[]> {
+    return await db.select().from(leaves);
+  }
+
+  async createLeave(insertLeave: InsertLeave): Promise<Leave> {
+    const [leave] = await db.insert(leaves).values(insertLeave).returning();
+    return leave;
+  }
+
+  async deleteLeave(id: number): Promise<void> {
+    await db.delete(leaves).where(eq(leaves.id, id));
+  }
+
+  async createLeavesBulk(insertLeaves: InsertLeave[]): Promise<Leave[]> {
+    if (insertLeaves.length === 0) return [];
+    return await db.insert(leaves).values(insertLeaves).returning();
+  }
+
+  // Audit logs
+  async getAuditLogs(filters?: { startDate?: string; endDate?: string; employeeCode?: string }): Promise<any[]> {
+    if (!filters) {
+      return await db.select().from(auditLogs).orderBy(desc(auditLogs.timestamp));
+    }
+    const conditions = [];
+    if (filters.startDate) conditions.push(gte(auditLogs.date, filters.startDate));
+    if (filters.endDate) conditions.push(lte(auditLogs.date, filters.endDate));
+    if (filters.employeeCode) conditions.push(eq(auditLogs.employeeCode, filters.employeeCode));
+    if (conditions.length === 0) {
+      return await db.select().from(auditLogs).orderBy(desc(auditLogs.timestamp));
+    }
+    return await db.select().from(auditLogs).where(and(...conditions)).orderBy(desc(auditLogs.timestamp));
+  }
+
+  async createAuditLogsBulk(entries: { employeeCode: string; date: string; action: string; details: any }[]): Promise<void> {
+    if (entries.length === 0) return;
+    await db.insert(auditLogs).values(entries);
   }
 
   // Bulk

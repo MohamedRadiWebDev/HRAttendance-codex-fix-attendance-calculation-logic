@@ -12,6 +12,8 @@ import Rules from "@/pages/Rules";
 import Templates from "@/pages/Templates";
 import Adjustments from "@/pages/Adjustments";
 import BulkAdjustmentsImport from "@/pages/BulkAdjustmentsImport";
+import Leaves from "@/pages/Leaves";
+import AuditLogs from "@/pages/AuditLogs";
 
 function Router() {
   return (
@@ -24,6 +26,8 @@ function Router() {
       <Route path="/templates" component={Templates} />
       <Route path="/adjustments" component={Adjustments} />
       <Route path="/bulk-adjustments" component={BulkAdjustmentsImport} />
+      <Route path="/leaves" component={Leaves} />
+      <Route path="/audit-logs" component={AuditLogs} />
       <Route component={NotFound} />
     </Switch>
   );
