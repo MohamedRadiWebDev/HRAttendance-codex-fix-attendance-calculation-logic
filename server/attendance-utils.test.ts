@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
 import {
+  buildPunchConsumptionKey,
+  composeDailyNotes,
   computeAdjustmentEffects,
   computeAutomaticNotes,
   computeOvertimeHours,
   computePenaltyEntries,
+  filterConsumedPunches,
 } from "./attendance-utils";
 
 const toSeconds = (value: string) => {
@@ -97,6 +100,16 @@ const toSeconds = (value: string) => {
 })();
 
 (() => {
+  const notes = composeDailyNotes({
+    baseNotes: "سهو بصمة",
+    extraNotes: ["خروج بعد منتصف الليل 00:39 (2024-12-25)"],
+    leaveNotes: ["Official Leave"],
+    hasOvernightStay: true,
+  });
+  assert.equal(notes, "مبيت");
+})();
+
+(() => {
   const penalties = computePenaltyEntries({
     isExcused: false,
     latePenaltyValue: 0.25,
@@ -167,6 +180,14 @@ const toSeconds = (value: string) => {
     computeOvertimeHours({ shiftEnd: "17:00", checkOutSeconds: 19 * 3600 }),
     1
   );
+})();
+
+(() => {
+  const punchA = { employeeCode: "EMP1", punchDatetime: new Date("2024-12-25T00:39:00Z") };
+  const punchB = { employeeCode: "EMP1", punchDatetime: new Date("2024-12-25T08:30:00Z") };
+  const consumed = new Set([buildPunchConsumptionKey("EMP1", punchA.punchDatetime)]);
+  const filtered = filterConsumedPunches([punchA, punchB], consumed);
+  assert.deepEqual(filtered, [punchB]);
 })();
 
 (() => {
