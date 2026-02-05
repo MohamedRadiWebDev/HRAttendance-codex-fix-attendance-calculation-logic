@@ -437,6 +437,7 @@ export async function registerRoutes(
           const isSaturday = dayOfWeek === 6;
           let currentShiftStart = "09:00";
           let currentShiftEnd = "17:00"; // Default 8 hours
+          let shiftSource = "Normal Default";
           
           const shiftRule = activeRules.find(r => r.ruleType === 'custom_shift');
           if (shiftRule) {
