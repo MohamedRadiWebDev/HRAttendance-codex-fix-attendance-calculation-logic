@@ -110,6 +110,32 @@ export const appendNotes = (existingNotes: string | null | undefined, additions:
   return Array.from(set).join("، ");
 };
 
+export const composeDailyNotes = ({
+  baseNotes,
+  extraNotes,
+  leaveNotes,
+  hasOvernightStay,
+}: {
+  baseNotes?: string | null;
+  extraNotes: string[];
+  leaveNotes: string[];
+  hasOvernightStay: boolean;
+}) => {
+  if (hasOvernightStay) return "مبيت";
+  return appendNotes(baseNotes, [...extraNotes, ...leaveNotes]);
+};
+
+export const buildPunchConsumptionKey = (employeeCode: string, punchDatetime: Date) =>
+  `${employeeCode}__${punchDatetime.getTime()}`;
+
+export const filterConsumedPunches = <T extends { employeeCode: string; punchDatetime: Date }>(
+  punches: T[],
+  consumed: Set<string> | null | undefined
+) => {
+  if (!consumed || consumed.size === 0) return punches;
+  return punches.filter((punch) => !consumed.has(buildPunchConsumptionKey(punch.employeeCode, punch.punchDatetime)));
+};
+
 export const computeAutomaticNotes = ({
   existingNotes,
   checkInExists,
