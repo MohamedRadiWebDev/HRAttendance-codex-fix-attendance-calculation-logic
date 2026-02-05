@@ -20,6 +20,7 @@ const navigation = [
   { name: 'رفع التعديلات', href: '/bulk-adjustments', icon: Upload },
   { name: 'القواعد والورديات', href: '/rules', icon: Settings },
   { name: 'نماذج الاكسل', href: '/templates', icon: FileSpreadsheet },
+  { name: 'سجل المراجعة', href: '/audit-logs', icon: ScrollText },
   { name: 'استيراد بيانات', href: '/import', icon: Upload },
 ];
 
