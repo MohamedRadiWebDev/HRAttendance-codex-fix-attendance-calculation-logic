@@ -7,7 +7,9 @@ import {
   FileSpreadsheet, 
   Settings, 
   Upload, 
-  Briefcase 
+  Briefcase,
+  ClipboardList,
+  ScrollText
 } from "lucide-react";
 
 const navigation = [
@@ -15,9 +17,11 @@ const navigation = [
   { name: 'الموظفين', href: '/employees', icon: Users },
   { name: 'الحضور والانصراف', href: '/attendance', icon: CalendarCheck },
   { name: 'التسويات والإجازات', href: '/adjustments', icon: Briefcase },
+  { name: 'إدارة الإجازات', href: '/leaves', icon: ClipboardList },
   { name: 'رفع التعديلات', href: '/bulk-adjustments', icon: Upload },
   { name: 'القواعد والورديات', href: '/rules', icon: Settings },
   { name: 'نماذج الاكسل', href: '/templates', icon: FileSpreadsheet },
+  { name: 'سجل المراجعة', href: '/audit-logs', icon: ScrollText },
   { name: 'استيراد بيانات', href: '/import', icon: Upload },
 ];
 

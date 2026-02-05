@@ -137,6 +137,109 @@ export async function registerRoutes(
     res.json(adjustments);
   });
 
+  // Leaves
+  app.get(api.leaves.list.path, async (_req, res) => {
+    const leaves = await storage.getLeaves();
+    res.json(leaves);
+  });
+
+  app.post(api.leaves.create.path, async (req, res) => {
+    try {
+      const input = api.leaves.create.input.parse(req.body);
+      const leave = await storage.createLeave(input);
+      res.status(201).json(leave);
+    } catch (err) {
+      res.status(400).json({ message: "Invalid input" });
+    }
+  });
+
+  app.delete(api.leaves.delete.path, async (req, res) => {
+    await storage.deleteLeave(Number(req.params.id));
+    res.status(204).end();
+  });
+
+  app.post(api.leaves.import.path, async (req, res) => {
+    try {
+      const { rows } = api.leaves.import.input.parse(req.body);
+      const employees = await storage.getEmployees();
+      const sectors = new Set(employees.map((emp) => emp.sector).filter(Boolean));
+      const departments = new Set(employees.map((emp) => emp.department).filter(Boolean));
+      const sections = new Set(employees.map((emp) => emp.section).filter(Boolean));
+      const branches = new Set(employees.map((emp) => emp.branch).filter(Boolean));
+      const employeeCodes = new Set(employees.map((emp) => emp.code));
+      const scopes = new Set(["all", "sector", "department", "section", "branch", "emp"]);
+      const types = new Set(["official", "collections"]);
+
+      const invalid: { rowIndex: number; reason: string }[] = [];
+      const validRows = rows.filter((row: any) => {
+        if (!types.has(row.type)) {
+          invalid.push({ rowIndex: row.rowIndex ?? 0, reason: "نوع غير مسموح" });
+          return false;
+        }
+        if (!scopes.has(row.scope)) {
+          invalid.push({ rowIndex: row.rowIndex ?? 0, reason: "نطاق غير مسموح" });
+          return false;
+        }
+        if (row.scope !== "all") {
+          if (!row.scopeValue) {
+            invalid.push({ rowIndex: row.rowIndex ?? 0, reason: "قيمة النطاق مطلوبة" });
+            return false;
+          }
+          if (row.scope === "sector" && !sectors.has(row.scopeValue)) {
+            invalid.push({ rowIndex: row.rowIndex ?? 0, reason: "قطاع غير معروف" });
+            return false;
+          }
+          if (row.scope === "department" && !departments.has(row.scopeValue)) {
+            invalid.push({ rowIndex: row.rowIndex ?? 0, reason: "إدارة غير معروفة" });
+            return false;
+          }
+          if (row.scope === "section" && !sections.has(row.scopeValue)) {
+            invalid.push({ rowIndex: row.rowIndex ?? 0, reason: "قسم غير معروف" });
+            return false;
+          }
+          if (row.scope === "branch" && !branches.has(row.scopeValue)) {
+            invalid.push({ rowIndex: row.rowIndex ?? 0, reason: "فرع غير معروف" });
+            return false;
+          }
+          if (row.scope === "emp" && !employeeCodes.has(row.scopeValue)) {
+            invalid.push({ rowIndex: row.rowIndex ?? 0, reason: "كود الموظف غير موجود" });
+            return false;
+          }
+        }
+        if (row.startDate > row.endDate) {
+          invalid.push({ rowIndex: row.rowIndex ?? 0, reason: "تاريخ البداية بعد النهاية" });
+          return false;
+        }
+        return true;
+      }).map((row: any) => ({
+        type: row.type,
+        scope: row.scope,
+        scopeValue: row.scopeValue || null,
+        startDate: row.startDate,
+        endDate: row.endDate,
+        note: row.note || null,
+      }));
+
+      if (validRows.length > 0) {
+        await storage.createLeavesBulk(validRows);
+      }
+      res.json({ inserted: validRows.length, invalid });
+    } catch (err) {
+      res.status(400).json({ message: "Invalid input" });
+    }
+  });
+
+  // Audit logs
+  app.get(api.auditLogs.list.path, async (req, res) => {
+    const { startDate, endDate, employeeCode } = req.query;
+    const logs = await storage.getAuditLogs({
+      startDate: startDate ? String(startDate) : undefined,
+      endDate: endDate ? String(endDate) : undefined,
+      employeeCode: employeeCode ? String(employeeCode) : undefined,
+    });
+    res.json(logs);
+  });
+
   app.post(api.adjustments.create.path, async (req, res) => {
     try {
       const input = api.adjustments.create.input.parse(req.body);
@@ -249,6 +352,7 @@ export async function registerRoutes(
       
       const punches = await storage.getPunches(searchStart, searchEnd);
       const rules = await storage.getRules();
+      const leaves = await storage.getLeaves();
       const adjustments = await storage.getAdjustments();
       
       let processedCount = 0;
@@ -334,7 +438,7 @@ export async function registerRoutes(
         const formatLocalDateTime = (date: Date) => (
           `${formatLocalDay(date)} ${String(date.getUTCHours()).padStart(2, "0")}:${String(date.getUTCMinutes()).padStart(2, "0")}`
         );
-        const buildAuditNotes = ({
+        const buildAuditDetails = ({
           linkedInfo,
           hasOvernightStay,
           checkInDateTime,
@@ -348,17 +452,31 @@ export async function registerRoutes(
           checkOutDateTime: Date | null;
           overtimeStart: Date;
           overtimeHours: number;
-        }) => {
-          if (linkedInfo.length === 0 && !hasOvernightStay) return [];
-          const notes: string[] = [];
-          linkedInfo.forEach((info) => {
-            notes.push(`ربط بصمة لليوم السابق: ${info.timeLabel} (${info.originalDate}) - ${info.reason}`);
-          });
-          const checkInLabel = checkInDateTime ? formatLocalDateTime(checkInDateTime) : "-";
-          const checkOutLabel = checkOutDateTime ? formatLocalDateTime(checkOutDateTime) : "-";
-          const overtimeStartLabel = formatLocalDateTime(overtimeStart);
-          notes.push(`حساب الساعات: دخول ${checkInLabel} خروج ${checkOutLabel} | بداية الإضافي ${overtimeStartLabel} | إضافي ${overtimeHours}`);
-          return notes;
+        }) => ({
+          linkedPunches: linkedInfo,
+          overnightStay: hasOvernightStay,
+          checkInDateTime: checkInDateTime ? formatLocalDateTime(checkInDateTime) : null,
+          checkOutDateTime: checkOutDateTime ? formatLocalDateTime(checkOutDateTime) : null,
+          overtimeStart: formatLocalDateTime(overtimeStart),
+          overtimeHours,
+        });
+        const auditLogEntries: { employeeCode: string; date: string; action: string; details: any }[] = [];
+        const addAuditLog = (entry: { employeeCode: string; date: string; action: string; details: any }) => {
+          auditLogEntries.push(entry);
+        };
+        const matchesScope = (scope: string, value: string | null | undefined) => {
+          if (scope === "all") return true;
+          if (scope === "sector") return value === employee.sector;
+          if (scope === "department") return value === employee.department;
+          if (scope === "section") return value === employee.section;
+          if (scope === "branch") return value === employee.branch;
+          if (scope === "emp") return value === employee.code;
+          return false;
+        };
+        const appliesLeave = (leave: any, dateStr: string) => {
+          if (dateStr < leave.startDate || dateStr > leave.endDate) return false;
+          if (leave.type === "collections" && employee.sector !== "التحصيل") return false;
+          return matchesScope(leave.scope, leave.scopeValue || null);
         };
 
         for (let d = new Date(startLocal); d <= endLocal; d.setUTCDate(d.getUTCDate() + 1)) {
@@ -453,10 +571,17 @@ export async function registerRoutes(
           const leaveTypeRaw = typeof (leaveRule?.params as any)?.leaveType === "string"
             ? String((leaveRule?.params as any)?.leaveType).toLowerCase()
             : "";
-          const leaveCategory = leaveRule
+          const leaveCategoryFromRule = leaveRule
             ? (leaveTypeRaw === "official" ? "Official Leave" : "HR Leave")
             : null;
-          const isLeaveDay = Boolean(leaveRule);
+          const matchedLeaves = leaves.filter((leave) => appliesLeave(leave, dateStr));
+          const hasOfficialLeave = matchedLeaves.some((leave) => leave.type === "official");
+          const leaveCategoryFromLeave = matchedLeaves.length > 0
+            ? (hasOfficialLeave ? "Official Leave" : "HR Leave")
+            : null;
+          const leaveNotes = matchedLeaves.map((leave) => leave.note).filter(Boolean) as string[];
+          const leaveCategory = leaveCategoryFromRule || leaveCategoryFromLeave;
+          const isLeaveDay = Boolean(leaveRule || matchedLeaves.length > 0);
           const hasOvernightStay = activeRules.some(r => r.ruleType === "overnight_stay");
 
           // 3. Check for adjustments (excel + manual)
@@ -494,21 +619,25 @@ export async function registerRoutes(
             const nextDay = new Date(d);
             nextDay.setUTCDate(nextDay.getUTCDate() + 1);
             const nextDayShiftStartUTC = toUtcFromSeconds(nextDay, timeStringToSeconds(currentShiftStart));
-            let effectiveCheckOutDateTime = checkOutLocal;
-            if (hasOvernightStay && !effectiveCheckOutDateTime && checkInLocal) {
-              effectiveCheckOutDateTime = nextDayShiftStartUTC;
-            }
+            const effectiveCheckOutDateTime = hasOvernightStay ? nextDayShiftStartUTC : checkOutLocal;
             const overtimeStart = new Date(
               toUtcFromSeconds(d, timeStringToSeconds(currentShiftEnd)).getTime() + 60 * 60 * 1000
             );
-            const auditNotes = buildAuditNotes({
-              linkedInfo,
-              hasOvernightStay,
-              checkInDateTime: checkInLocal,
-              checkOutDateTime: effectiveCheckOutDateTime,
-              overtimeStart,
-              overtimeHours: 0,
-            });
+            if (linkedInfo.length > 0 || hasOvernightStay) {
+              addAuditLog({
+                employeeCode: employee.code,
+                date: dateStr,
+                action: "overnight_check",
+                details: buildAuditDetails({
+                  linkedInfo,
+                  hasOvernightStay,
+                  checkInDateTime: checkInLocal,
+                  checkOutDateTime: effectiveCheckOutDateTime,
+                  overtimeStart,
+                  overtimeHours: 0,
+                }),
+              });
+            }
             const extraNotes = extraNotesByKey.get(dateStr) || [];
             const stayNotes = hasOvernightStay ? [...extraNotes, "مبيت"] : extraNotes;
             await storage.createAttendanceRecord({
@@ -521,7 +650,7 @@ export async function registerRoutes(
               overtimeHours: 0,
               penalties: [],
               isOvernight: false,
-              notes: appendNotes(isLeaveDay ? leaveCategory : null, [...stayNotes, ...auditNotes]),
+              notes: appendNotes(isLeaveDay ? leaveCategory : null, [...stayNotes, ...leaveNotes]),
               missionStart: null,
               missionEnd: null,
               halfDayExcused: false,
@@ -534,9 +663,10 @@ export async function registerRoutes(
             const checkInSeconds = checkInLocal
               ? checkInLocal.getUTCHours() * 3600 + checkInLocal.getUTCMinutes() * 60 + checkInLocal.getUTCSeconds()
               : null;
-            const checkOutSeconds = checkOutLocal
+            const checkOutSecondsRaw = checkOutLocal
               ? checkOutLocal.getUTCHours() * 3600 + checkOutLocal.getUTCMinutes() * 60 + checkOutLocal.getUTCSeconds()
               : null;
+            const checkOutSeconds = hasOvernightStay ? null : checkOutSecondsRaw;
 
             const adjustmentEffects = computeAdjustmentEffects({
               shiftStart: currentShiftStart,
@@ -602,13 +732,14 @@ export async function registerRoutes(
               penalties.push({ type: "غياب", value: 1 });
             }
 
-            const missingCheckout = Boolean(checkIn && !checkOut) && !isExcusedForPenalties && !hasOvernightStay;
+            const effectiveCheckOutForPenalties = hasOvernightStay ? null : checkOut;
+            const missingCheckout = Boolean(checkIn && !effectiveCheckOutForPenalties) && !isExcusedForPenalties && !hasOvernightStay;
             const earlyLeaveThreshold = effectiveShiftEndUTC.getTime() - graceMinutes * 60 * 1000;
             const earlyLeaveTriggered = Boolean(
-              checkOut &&
+              effectiveCheckOutForPenalties &&
               !missingCheckout &&
               !isExcusedForPenalties &&
-              checkOut.getTime() < earlyLeaveThreshold
+              effectiveCheckOutForPenalties.getTime() < earlyLeaveThreshold
             );
 
             penalties.push(
@@ -633,16 +764,15 @@ export async function registerRoutes(
               checkOutExists: Boolean(checkOut),
               missingStampExcused: excusedDay || hasOvernightStay,
               earlyLeaveExcused: excusedDay,
-              checkOutBeforeEarlyLeave: Boolean(checkOut && checkOut.getTime() < earlyLeaveThreshold),
+              checkOutBeforeEarlyLeave: Boolean(effectiveCheckOutForPenalties && effectiveCheckOutForPenalties.getTime() < earlyLeaveThreshold),
             });
 
             const nextDay = new Date(d);
             nextDay.setUTCDate(nextDay.getUTCDate() + 1);
             const nextDayShiftStartUTC = toUtcFromSeconds(nextDay, adjustmentEffects.effectiveShiftStartSeconds);
-            let effectiveCheckOutDateTime = checkOutDateTime;
-            if (hasOvernightStay && !effectiveCheckOutDateTime && checkInDateTime) {
-              effectiveCheckOutDateTime = nextDayShiftStartUTC;
-            }
+            const effectiveCheckOutDateTime = hasOvernightStay
+              ? nextDayShiftStartUTC
+              : checkOutDateTime;
             if (checkInDateTime && effectiveCheckOutDateTime) {
               const diffMs = effectiveCheckOutDateTime.getTime() - checkInDateTime.getTime();
               totalHours = diffMs > 0 ? diffMs / (1000 * 60 * 60) : 0;
@@ -661,28 +791,36 @@ export async function registerRoutes(
             }
 
             const linkedInfo = linkedPunchInfoByKey.get(dateStr) || [];
-            const auditNotes = buildAuditNotes({
-              linkedInfo,
-              hasOvernightStay,
-              checkInDateTime,
-              checkOutDateTime: effectiveCheckOutDateTime,
-              overtimeStart,
-              overtimeHours,
-            });
+            if (linkedInfo.length > 0 || hasOvernightStay) {
+              addAuditLog({
+                employeeCode: employee.code,
+                date: dateStr,
+                action: "overnight_check",
+                details: buildAuditDetails({
+                  linkedInfo,
+                  hasOvernightStay,
+                  checkInDateTime,
+                  checkOutDateTime: effectiveCheckOutDateTime,
+                  overtimeStart,
+                  overtimeHours,
+                }),
+              });
+            }
 
             const extraNotes = extraNotesByKey.get(dateStr) || [];
             const stayNotes = hasOvernightStay ? [...extraNotes, "مبيت"] : extraNotes;
+            const recordCheckOut = hasOvernightStay ? nextDayShiftStartUTC : checkOut;
             await storage.createAttendanceRecord({
               employeeCode: employee.code,
               date: dateStr,
               checkIn,
-              checkOut,
+              checkOut: recordCheckOut,
               totalHours,
               status,
               overtimeHours,
               penalties,
               isOvernight: false,
-              notes: appendNotes(autoNotes || null, [...stayNotes, ...auditNotes]),
+              notes: appendNotes(autoNotes || null, [...stayNotes, ...leaveNotes]),
               missionStart,
               missionEnd,
               halfDayExcused,
@@ -702,13 +840,16 @@ export async function registerRoutes(
               penalties: [{ type: "غياب", value: 1 }],
               overtimeHours: 0,
               isOvernight: false,
-              notes: appendNotes(null, stayNotes),
+              notes: appendNotes(null, [...stayNotes, ...leaveNotes]),
               missionStart: null,
               missionEnd: null,
               halfDayExcused: false,
             });
             processedCount++;
           }
+        }
+        if (auditLogEntries.length > 0) {
+          await storage.createAuditLogsBulk(auditLogEntries);
         }
       }
 
