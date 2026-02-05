@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, buildUrl } from "@shared/routes";
-import { type InsertSpecialRule, type InsertAdjustment, type InsertTemplate } from "@shared/schema";
+import { type InsertSpecialRule, type InsertAdjustment, type InsertTemplate, type InsertLeave } from "@shared/schema";
 
 export function useRules() {
   return useQuery({
@@ -145,5 +145,60 @@ export function useDeleteTemplate() {
       if (!res.ok) throw new Error("Failed to delete template");
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: [api.templates.list.path] }),
+  });
+}
+
+export function useLeaves() {
+  return useQuery({
+    queryKey: [api.leaves.list.path],
+    queryFn: async () => {
+      const res = await fetch(api.leaves.list.path);
+      if (!res.ok) throw new Error("Failed to fetch leaves");
+      return api.leaves.list.responses[200].parse(await res.json());
+    },
+  });
+}
+
+export function useCreateLeave() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (data: InsertLeave) => {
+      const res = await fetch(api.leaves.create.path, {
+        method: api.leaves.create.method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      });
+      if (!res.ok) throw new Error("Failed to create leave");
+      return api.leaves.create.responses[201].parse(await res.json());
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: [api.leaves.list.path] }),
+  });
+}
+
+export function useDeleteLeave() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: number) => {
+      const url = buildUrl(api.leaves.delete.path, { id });
+      const res = await fetch(url, { method: api.leaves.delete.method });
+      if (!res.ok) throw new Error("Failed to delete leave");
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: [api.leaves.list.path] }),
+  });
+}
+
+export function useImportLeaves() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (data: { rows: InsertLeave[] }) => {
+      const res = await fetch(api.leaves.import.path, {
+        method: api.leaves.import.method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      });
+      if (!res.ok) throw new Error("Failed to import leaves");
+      return api.leaves.import.responses[200].parse(await res.json());
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: [api.leaves.list.path] }),
   });
 }

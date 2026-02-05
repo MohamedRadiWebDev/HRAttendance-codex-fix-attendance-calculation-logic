@@ -4,7 +4,7 @@ import { storage } from "./storage";
 import { api } from "@shared/routes";
 import { z } from "zod";
 import { insertEmployeeSchema, insertTemplateSchema, insertRuleSchema, insertAdjustmentSchema, ADJUSTMENT_TYPES } from "@shared/schema";
-import { computeAdjustmentEffects, computeAutomaticNotes, computeOvertimeHours, computePenaltyEntries, normalizeTimeToHms, secondsToHms, timeStringToSeconds } from "./attendance-utils";
+import { appendNotes, computeAdjustmentEffects, computeAutomaticNotes, computePenaltyEntries, normalizeTimeToHms, secondsToHms, timeStringToSeconds } from "./attendance-utils";
 
 export async function registerRoutes(
   httpServer: Server,
@@ -137,6 +137,119 @@ export async function registerRoutes(
     res.json(adjustments);
   });
 
+  // Leaves
+  app.get(api.leaves.list.path, async (_req, res) => {
+    const leaves = await storage.getLeaves();
+    res.json(leaves);
+  });
+
+  app.post(api.leaves.create.path, async (req, res) => {
+    try {
+      const input = api.leaves.create.input.parse(req.body);
+      const existingLeaves = await storage.getLeaves();
+      const hasOverlap = existingLeaves.some((leave) => {
+        if (leave.type !== input.type) return false;
+        if (leave.scope !== input.scope) return false;
+        if ((leave.scopeValue || null) !== (input.scopeValue || null)) return false;
+        return !(input.endDate < leave.startDate || input.startDate > leave.endDate);
+      });
+      if (hasOverlap) {
+        return res.status(400).json({ message: "تداخل في الإجازات" });
+      }
+      const leave = await storage.createLeave(input);
+      res.status(201).json(leave);
+    } catch (err) {
+      res.status(400).json({ message: "Invalid input" });
+    }
+  });
+
+  app.delete(api.leaves.delete.path, async (req, res) => {
+    await storage.deleteLeave(Number(req.params.id));
+    res.status(204).end();
+  });
+
+  app.post(api.leaves.import.path, async (req, res) => {
+    try {
+      const { rows } = api.leaves.import.input.parse(req.body);
+      const employees = await storage.getEmployees();
+      const existingLeaves = await storage.getLeaves();
+      const sectors = new Set(employees.map((emp) => emp.sector).filter(Boolean));
+      const departments = new Set(employees.map((emp) => emp.department).filter(Boolean));
+      const sections = new Set(employees.map((emp) => emp.section).filter(Boolean));
+      const branches = new Set(employees.map((emp) => emp.branch).filter(Boolean));
+      const employeeCodes = new Set(employees.map((emp) => emp.code));
+      const scopes = new Set(["all", "sector", "department", "section", "branch", "emp"]);
+      const types = new Set(["official", "collections"]);
+
+      const invalid: { rowIndex: number; reason: string }[] = [];
+      const validRows = rows.filter((row: any) => {
+        if (!types.has(row.type)) {
+          invalid.push({ rowIndex: row.rowIndex ?? 0, reason: "نوع غير مسموح" });
+          return false;
+        }
+        if (!scopes.has(row.scope)) {
+          invalid.push({ rowIndex: row.rowIndex ?? 0, reason: "نطاق غير مسموح" });
+          return false;
+        }
+        if (row.scope !== "all") {
+          if (!row.scopeValue) {
+            invalid.push({ rowIndex: row.rowIndex ?? 0, reason: "قيمة النطاق مطلوبة" });
+            return false;
+          }
+          if (row.scope === "sector" && !sectors.has(row.scopeValue)) {
+            invalid.push({ rowIndex: row.rowIndex ?? 0, reason: "قطاع غير معروف" });
+            return false;
+          }
+          if (row.scope === "department" && !departments.has(row.scopeValue)) {
+            invalid.push({ rowIndex: row.rowIndex ?? 0, reason: "إدارة غير معروفة" });
+            return false;
+          }
+          if (row.scope === "section" && !sections.has(row.scopeValue)) {
+            invalid.push({ rowIndex: row.rowIndex ?? 0, reason: "قسم غير معروف" });
+            return false;
+          }
+          if (row.scope === "branch" && !branches.has(row.scopeValue)) {
+            invalid.push({ rowIndex: row.rowIndex ?? 0, reason: "فرع غير معروف" });
+            return false;
+          }
+          if (row.scope === "emp" && !employeeCodes.has(row.scopeValue)) {
+            invalid.push({ rowIndex: row.rowIndex ?? 0, reason: "كود الموظف غير موجود" });
+            return false;
+          }
+        }
+        if (row.startDate > row.endDate) {
+          invalid.push({ rowIndex: row.rowIndex ?? 0, reason: "تاريخ البداية بعد النهاية" });
+          return false;
+        }
+        const hasOverlap = existingLeaves.some((leave) => {
+          if (leave.type !== row.type) return false;
+          if (leave.scope !== row.scope) return false;
+          if ((leave.scopeValue || null) !== (row.scopeValue || null)) return false;
+          return !(row.endDate < leave.startDate || row.startDate > leave.endDate);
+        });
+        if (hasOverlap) {
+          invalid.push({ rowIndex: row.rowIndex ?? 0, reason: "تداخل في الإجازات" });
+          return false;
+        }
+        return true;
+      }).map((row: any) => ({
+        type: row.type,
+        scope: row.scope,
+        scopeValue: row.scopeValue || null,
+        startDate: row.startDate,
+        endDate: row.endDate,
+        note: row.note || null,
+      }));
+
+      if (validRows.length > 0) {
+        await storage.createLeavesBulk(validRows);
+      }
+      res.json({ inserted: validRows.length, invalid });
+    } catch (err) {
+      res.status(400).json({ message: "Invalid input" });
+    }
+  });
+
   app.post(api.adjustments.create.path, async (req, res) => {
     try {
       const input = api.adjustments.create.input.parse(req.body);
@@ -249,6 +362,7 @@ export async function registerRoutes(
       
       const punches = await storage.getPunches(searchStart, searchEnd);
       const rules = await storage.getRules();
+      const leaves = await storage.getLeaves();
       const adjustments = await storage.getAdjustments();
       
       let processedCount = 0;
@@ -266,6 +380,129 @@ export async function registerRoutes(
       const endLocal = new Date(Date.UTC(endYear, endMonth - 1, endDay));
 
       for (const employee of allEmployees) {
+        const punchesByDate = new Map<string, typeof punches>();
+        punches.forEach((punch) => {
+          if (punch.employeeCode !== employee.code) return;
+          const localPunch = toLocal(punch.punchDatetime);
+          const py = localPunch.getUTCFullYear();
+          const pm = String(localPunch.getUTCMonth() + 1).padStart(2, "0");
+          const pd = String(localPunch.getUTCDate()).padStart(2, "0");
+          const dateKey = `${py}-${pm}-${pd}`;
+          const list = punchesByDate.get(dateKey) || [];
+          list.push(punch);
+          punchesByDate.set(dateKey, list);
+        });
+
+        punchesByDate.forEach((list) => {
+          list.sort((a, b) => a.punchDatetime.getTime() - b.punchDatetime.getTime());
+        });
+
+        const extraNotesByKey = new Map<string, string[]>();
+        const addExtraNote = (key: string, note: string) => {
+          const existing = extraNotesByKey.get(key) || [];
+          existing.push(note);
+          extraNotesByKey.set(key, existing);
+        };
+
+        const shiftStartHour = Number.parseInt((employee.shiftStart || "09:00").split(":")[0], 10);
+        const arrivalWindows: Record<number, { start: number; end: number }> = {
+          9: { start: 6, end: 12 },
+          8: { start: 5, end: 11 },
+          7: { start: 4, end: 10 },
+        };
+        const arrivalWindow = arrivalWindows[shiftStartHour] || arrivalWindows[9];
+        const isOvernightPunch = (date: Date) => {
+          const hour = date.getUTCHours();
+          return hour >= 0 && hour <= 5;
+        };
+        const isNormalArrivalPunch = (date: Date) => {
+          const hour = date.getUTCHours();
+          return hour >= arrivalWindow.start && hour <= arrivalWindow.end;
+        };
+        const isEarlyShiftEdge = (date: Date) => {
+          const hour = date.getUTCHours();
+          const minute = date.getUTCMinutes();
+          return shiftStartHour <= 7 && (hour === 4 && minute >= 30 || hour === 5 && minute === 0);
+        };
+        const toUtcFromSeconds = (baseDate: Date, seconds: number) => {
+          const hours = Math.floor(seconds / 3600);
+          const minutes = Math.floor((seconds % 3600) / 60);
+          const secs = Math.floor(seconds % 60);
+          const shiftTimeUTC = new Date(Date.UTC(
+            baseDate.getUTCFullYear(),
+            baseDate.getUTCMonth(),
+            baseDate.getUTCDate(),
+            hours,
+            minutes,
+            secs
+          ));
+          shiftTimeUTC.setTime(shiftTimeUTC.getTime() + offsetMinutes * 60 * 1000);
+          return shiftTimeUTC;
+        };
+        const matchesScope = (scope: string, value: string | null | undefined) => {
+          if (scope === "all") return true;
+          if (scope === "sector") return value === employee.sector;
+          if (scope === "department") return value === employee.department;
+          if (scope === "section") return value === employee.section;
+          if (scope === "branch") return value === employee.branch;
+          if (scope === "emp") return value === employee.code;
+          return false;
+        };
+        const appliesLeave = (leave: any, dateStr: string) => {
+          if (dateStr < leave.startDate || dateStr > leave.endDate) return false;
+          if (leave.type === "collections" && employee.sector !== "التحصيل") return false;
+          return matchesScope(leave.scope, leave.scopeValue || null);
+        };
+
+        for (let d = new Date(startLocal); d <= endLocal; d.setUTCDate(d.getUTCDate() + 1)) {
+          const dateStr = formatLocalDay(d);
+          const prevDate = new Date(d);
+          prevDate.setUTCDate(prevDate.getUTCDate() - 1);
+          const prevDateStr = formatLocalDay(prevDate);
+          const dayPunches = punchesByDate.get(dateStr) || [];
+          const prevPunches = punchesByDate.get(prevDateStr) || [];
+
+          if (dayPunches.length === 0) continue;
+
+          const overnightPunches = dayPunches.filter((punch) => {
+            const localPunch = toLocal(punch.punchDatetime);
+            return isOvernightPunch(localPunch);
+          });
+
+          if (overnightPunches.length === 0) continue;
+
+          overnightPunches.forEach((punch) => {
+            const localPunch = toLocal(punch.punchDatetime);
+            const hasPrevCheckIn = prevPunches.length > 0;
+            const hasPrevCheckOut = prevPunches.length > 1;
+            if (!hasPrevCheckIn) return;
+
+            const hasNormalArrival = dayPunches.some((candidate) => {
+              if (candidate === punch) return false;
+              const localCandidate = toLocal(candidate.punchDatetime);
+              return isNormalArrivalPunch(localCandidate);
+            });
+
+            if (!hasPrevCheckOut && isEarlyShiftEdge(localPunch) && !hasNormalArrival) {
+              return;
+            }
+
+            if (!hasPrevCheckOut || hasNormalArrival) {
+              const updatedDayPunches = dayPunches.filter((item) => item !== punch);
+              updatedDayPunches.sort((a, b) => a.punchDatetime.getTime() - b.punchDatetime.getTime());
+              punchesByDate.set(dateStr, updatedDayPunches);
+
+              const updatedPrevPunches = [...prevPunches, punch].sort(
+                (a, b) => a.punchDatetime.getTime() - b.punchDatetime.getTime()
+              );
+              punchesByDate.set(prevDateStr, updatedPrevPunches);
+
+              const timeLabel = `${String(localPunch.getUTCHours()).padStart(2, "0")}:${String(localPunch.getUTCMinutes()).padStart(2, "0")}`;
+              addExtraNote(prevDateStr, `خروج بعد منتصف الليل ${timeLabel} (${dateStr})`);
+            }
+          });
+        }
+
         for (let d = new Date(startLocal); d <= endLocal; d.setUTCDate(d.getUTCDate() + 1)) {
           const dateStr = formatLocalDay(d);
           
@@ -283,44 +520,106 @@ export async function registerRoutes(
             return false;
           }).sort((a, b) => (b.priority || 0) - (a.priority || 0));
 
-          // 2. Determine shift times based on rules or employee default
-          let currentShiftStart = employee.shiftStart || "09:00";
+          // 2. Determine shift times based on rules or defaults (Saturday has a different default)
+          const dayOfWeek = d.getUTCDay();
+          const isSaturday = dayOfWeek === 6;
+          let currentShiftStart = "09:00";
           let currentShiftEnd = "17:00"; // Default 8 hours
           
           const shiftRule = activeRules.find(r => r.ruleType === 'custom_shift');
           if (shiftRule) {
             currentShiftStart = (shiftRule.params as any).shiftStart || currentShiftStart;
             currentShiftEnd = (shiftRule.params as any).shiftEnd || currentShiftEnd;
+          } else if (isSaturday) {
+            currentShiftStart = "10:00";
+            currentShiftEnd = "16:00";
           }
+
+          const isFriday = dayOfWeek === 5;
+          const leaveRule = activeRules.find(r => r.ruleType === "attendance_exempt");
+          const leaveTypeRaw = typeof (leaveRule?.params as any)?.leaveType === "string"
+            ? String((leaveRule?.params as any)?.leaveType).toLowerCase()
+            : "";
+          const leaveCategoryFromRule = leaveRule
+            ? (leaveTypeRaw === "official" ? "Official Leave" : "HR Leave")
+            : null;
+          const matchedLeaves = leaves.filter((leave) => appliesLeave(leave, dateStr));
+          const hasOfficialLeave = matchedLeaves.some((leave) => leave.type === "official");
+          const leaveCategoryFromLeave = matchedLeaves.length > 0
+            ? (hasOfficialLeave ? "Official Leave" : "HR Leave")
+            : null;
+          const leaveNotes = matchedLeaves.map((leave) => leave.note).filter(Boolean) as string[];
+          const leaveCategory = leaveCategoryFromRule || leaveCategoryFromLeave;
+          const isLeaveDay = Boolean(leaveRule || matchedLeaves.length > 0);
+          const hasOvernightStay = activeRules.some(r => r.ruleType === "overnight_stay");
 
           // 3. Check for adjustments (excel + manual)
           const dayAdjustments = adjustmentsByEmployeeDate.get(`${employee.code}__${dateStr}`) || [];
 
           // Get punches for this employee on this local day
           // A punch belongs to this day if its local time matches dateStr
-          const dayPunches = punches.filter(p => {
-            if (p.employeeCode !== employee.code) return false;
-            
-            // Convert punch UTC to local time to see which day it belongs to
-            const localPunch = toLocal(p.punchDatetime);
-            const py = localPunch.getUTCFullYear();
-            const pm = String(localPunch.getUTCMonth() + 1).padStart(2, "0");
-            const pd = String(localPunch.getUTCDate()).padStart(2, "0");
-            return `${py}-${pm}-${pd}` === dateStr;
-          }).sort((a, b) => a.punchDatetime.getTime() - b.punchDatetime.getTime());
+          const dayPunches = (punchesByDate.get(dateStr) || [])
+            .slice()
+            .sort((a, b) => a.punchDatetime.getTime() - b.punchDatetime.getTime());
+
+          const checkIn = dayPunches.length > 0 ? dayPunches[0].punchDatetime : null;
+          const checkOut = dayPunches.length > 1 ? dayPunches[dayPunches.length - 1].punchDatetime : null;
+          const checkInLocal = checkIn ? toLocal(checkIn) : null;
+          const checkOutLocal = checkOut ? toLocal(checkOut) : null;
+
+          let totalHours = 0;
+          if (checkInLocal && checkOutLocal) {
+            totalHours = (checkOutLocal.getTime() - checkInLocal.getTime()) / (1000 * 60 * 60);
+          }
+
+          if (isFriday || isLeaveDay) {
+            // Friday attendance windows are validation-only (11:00-16:00 or 12:00-17:00), not shift changes.
+            const attendedFriday = isFriday && dayPunches.some((punch) => {
+              const localPunch = toLocal(punch.punchDatetime);
+              const seconds = localPunch.getUTCHours() * 3600 + localPunch.getUTCMinutes() * 60 + localPunch.getUTCSeconds();
+              const windowAStart = 11 * 3600;
+              const windowAEnd = 16 * 3600;
+              const windowBStart = 12 * 3600;
+              const windowBEnd = 17 * 3600;
+              return (seconds >= windowAStart && seconds <= windowAEnd)
+                || (seconds >= windowBStart && seconds <= windowBEnd);
+            });
+            const nextDay = new Date(d);
+            nextDay.setUTCDate(nextDay.getUTCDate() + 1);
+            const nextDayShiftStartUTC = toUtcFromSeconds(nextDay, timeStringToSeconds(currentShiftStart));
+            const effectiveCheckOutDateTime = hasOvernightStay ? nextDayShiftStartUTC : checkOutLocal;
+            const overtimeStart = new Date(
+              toUtcFromSeconds(d, timeStringToSeconds(currentShiftEnd)).getTime() + 60 * 60 * 1000
+            );
+            const extraNotes = extraNotesByKey.get(dateStr) || [];
+            const stayNotes = hasOvernightStay ? [...extraNotes, "مبيت"] : extraNotes;
+            await storage.createAttendanceRecord({
+              employeeCode: employee.code,
+              date: dateStr,
+              checkIn,
+              checkOut,
+              totalHours: isFriday ? 0 : totalHours,
+              status: isFriday ? (attendedFriday ? "Friday Attended" : "Friday") : "Comp Day",
+              overtimeHours: 0,
+              penalties: [],
+              isOvernight: false,
+              notes: appendNotes(isLeaveDay ? leaveCategory : null, [...stayNotes, ...leaveNotes]),
+              missionStart: null,
+              missionEnd: null,
+              halfDayExcused: false,
+            });
+            processedCount++;
+            continue;
+          }
 
           if (dayPunches.length > 0 || dayAdjustments.length > 0) {
-            const checkIn = dayPunches.length > 0 ? dayPunches[0].punchDatetime : null;
-            const checkOut = dayPunches.length > 1 ? dayPunches[dayPunches.length - 1].punchDatetime : null;
-
-            const checkInLocal = checkIn ? toLocal(checkIn) : null;
-            const checkOutLocal = checkOut ? toLocal(checkOut) : null;
             const checkInSeconds = checkInLocal
               ? checkInLocal.getUTCHours() * 3600 + checkInLocal.getUTCMinutes() * 60 + checkInLocal.getUTCSeconds()
               : null;
-            const checkOutSeconds = checkOutLocal
+            const checkOutSecondsRaw = checkOutLocal
               ? checkOutLocal.getUTCHours() * 3600 + checkOutLocal.getUTCMinutes() * 60 + checkOutLocal.getUTCSeconds()
               : null;
+            const checkOutSeconds = hasOvernightStay ? null : checkOutSecondsRaw;
 
             const adjustmentEffects = computeAdjustmentEffects({
               shiftStart: currentShiftStart,
@@ -334,24 +633,8 @@ export async function registerRoutes(
               checkOutSeconds,
             });
 
-            const toUtcFromSeconds = (seconds: number) => {
-              const hours = Math.floor(seconds / 3600);
-              const minutes = Math.floor((seconds % 3600) / 60);
-              const secs = Math.floor(seconds % 60);
-              const shiftTimeUTC = new Date(Date.UTC(
-                d.getUTCFullYear(),
-                d.getUTCMonth(),
-                d.getUTCDate(),
-                hours,
-                minutes,
-                secs
-              ));
-              shiftTimeUTC.setTime(shiftTimeUTC.getTime() + offsetMinutes * 60 * 1000);
-              return shiftTimeUTC;
-            };
-
-            const effectiveShiftStartUTC = toUtcFromSeconds(adjustmentEffects.effectiveShiftStartSeconds);
-            const effectiveShiftEndUTC = toUtcFromSeconds(adjustmentEffects.effectiveShiftEndSeconds);
+            const effectiveShiftStartUTC = toUtcFromSeconds(d, adjustmentEffects.effectiveShiftStartSeconds);
+            const effectiveShiftEndUTC = toUtcFromSeconds(d, adjustmentEffects.effectiveShiftEndSeconds);
             const missionStart = adjustmentEffects.missionStartSeconds !== null
               ? secondsToHms(adjustmentEffects.missionStartSeconds)
               : null;
@@ -361,10 +644,14 @@ export async function registerRoutes(
 
             const firstStampSeconds = adjustmentEffects.firstStampSeconds;
             const lastStampSeconds = adjustmentEffects.lastStampSeconds;
-            let totalHours = 0;
-            if (firstStampSeconds !== null && lastStampSeconds !== null) {
-              const firstStampUTC = toUtcFromSeconds(firstStampSeconds);
-              const lastStampUTC = toUtcFromSeconds(lastStampSeconds);
+            const checkInDateTime = checkInLocal;
+            const checkOutDateTime = hasOvernightStay ? null : checkOutLocal;
+            if (checkInDateTime && checkOutDateTime) {
+              const diffMs = checkOutDateTime.getTime() - checkInDateTime.getTime();
+              totalHours = diffMs > 0 ? diffMs / (1000 * 60 * 60) : 0;
+            } else if (firstStampSeconds !== null && lastStampSeconds !== null) {
+              const firstStampUTC = toUtcFromSeconds(d, firstStampSeconds);
+              const lastStampUTC = toUtcFromSeconds(d, lastStampSeconds);
               totalHours = (lastStampUTC.getTime() - firstStampUTC.getTime()) / (1000 * 60 * 60);
             }
 
@@ -377,7 +664,7 @@ export async function registerRoutes(
             const excusedByHalfDayNoPunch = halfDayExcused && !checkIn && !checkOut;
             const excusedByMission = hasMission;
             const excusedDay = excusedByHalfDayNoPunch || excusedByMission;
-            const isExcusedForPenalties = excusedDay || suppressPenalties;
+            const isExcusedForPenalties = excusedDay || suppressPenalties || hasOvernightStay;
             let latePenaltyValue = 0;
             let lateMinutes = 0;
 
@@ -397,14 +684,18 @@ export async function registerRoutes(
               status = "Absent";
               penalties.push({ type: "غياب", value: 1 });
             }
+            if (hasOvernightStay) {
+              status = "Present";
+            }
 
-            const missingCheckout = Boolean(checkIn && !checkOut) && !isExcusedForPenalties;
+            const effectiveCheckOutForPenalties = hasOvernightStay ? null : checkOut;
+            const missingCheckout = Boolean(checkIn && !effectiveCheckOutForPenalties) && !isExcusedForPenalties;
             const earlyLeaveThreshold = effectiveShiftEndUTC.getTime() - graceMinutes * 60 * 1000;
             const earlyLeaveTriggered = Boolean(
-              checkOut &&
+              effectiveCheckOutForPenalties &&
               !missingCheckout &&
               !isExcusedForPenalties &&
-              checkOut.getTime() < earlyLeaveThreshold
+              effectiveCheckOutForPenalties.getTime() < earlyLeaveThreshold
             );
 
             penalties.push(
@@ -427,27 +718,48 @@ export async function registerRoutes(
               existingNotes: null,
               checkInExists: Boolean(checkIn),
               checkOutExists: Boolean(checkOut),
-              missingStampExcused: excusedDay,
-              earlyLeaveExcused: excusedDay,
-              checkOutBeforeEarlyLeave: Boolean(checkOut && checkOut.getTime() < earlyLeaveThreshold),
+              missingStampExcused: excusedDay || hasOvernightStay,
+              earlyLeaveExcused: excusedDay || hasOvernightStay,
+              checkOutBeforeEarlyLeave: Boolean(effectiveCheckOutForPenalties && effectiveCheckOutForPenalties.getTime() < earlyLeaveThreshold),
             });
 
-            const overtimeHours = computeOvertimeHours({
-              shiftEnd: currentShiftEnd,
-              checkOutSeconds,
-            });
+            const nextDay = new Date(d);
+            nextDay.setUTCDate(nextDay.getUTCDate() + 1);
+            const nextDayShiftStartUTC = toUtcFromSeconds(nextDay, adjustmentEffects.effectiveShiftStartSeconds);
+            const effectiveCheckOutDateTime = hasOvernightStay
+              ? nextDayShiftStartUTC
+              : checkOutDateTime;
+            if (checkInDateTime && effectiveCheckOutDateTime) {
+              const diffMs = effectiveCheckOutDateTime.getTime() - checkInDateTime.getTime();
+              totalHours = diffMs > 0 ? diffMs / (1000 * 60 * 60) : 0;
+            }
+            const overtimeStart = new Date(effectiveShiftEndUTC.getTime() + 60 * 60 * 1000);
+            const overtimeCutoff = nextDayShiftStartUTC;
+            let overtimeHours = 0;
+            if (effectiveCheckOutDateTime) {
+              const cappedCheckout = effectiveCheckOutDateTime.getTime() > overtimeCutoff.getTime()
+                ? overtimeCutoff
+                : effectiveCheckOutDateTime;
+              if (cappedCheckout.getTime() > overtimeStart.getTime()) {
+                const overtimeMs = cappedCheckout.getTime() - overtimeStart.getTime();
+                overtimeHours = Math.floor(overtimeMs / (1000 * 60 * 60));
+              }
+            }
 
+            const extraNotes = extraNotesByKey.get(dateStr) || [];
+            const stayNotes = hasOvernightStay ? [...extraNotes, "مبيت"] : extraNotes;
+            const recordCheckOut = hasOvernightStay ? null : checkOut;
             await storage.createAttendanceRecord({
               employeeCode: employee.code,
               date: dateStr,
               checkIn,
-              checkOut,
+              checkOut: recordCheckOut,
               totalHours,
               status,
               overtimeHours,
               penalties,
-              isOvernight: activeRules.some(r => r.ruleType === 'overtime_overnight'),
-              notes: autoNotes || null,
+              isOvernight: false,
+              notes: appendNotes(autoNotes || null, [...stayNotes, ...leaveNotes]),
               missionStart,
               missionEnd,
               halfDayExcused,
@@ -455,6 +767,8 @@ export async function registerRoutes(
             processedCount++;
           } else {
             // Absent
+             const extraNotes = extraNotesByKey.get(dateStr) || [];
+             const stayNotes = hasOvernightStay ? [...extraNotes, "مبيت"] : extraNotes;
              await storage.createAttendanceRecord({
               employeeCode: employee.code,
               date: dateStr,
@@ -465,7 +779,7 @@ export async function registerRoutes(
               penalties: [{ type: "غياب", value: 1 }],
               overtimeHours: 0,
               isOvernight: false,
-              notes: null,
+              notes: appendNotes(null, [...stayNotes, ...leaveNotes]),
               missionStart: null,
               missionEnd: null,
               halfDayExcused: false,
