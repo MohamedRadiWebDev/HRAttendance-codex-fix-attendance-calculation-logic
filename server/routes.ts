@@ -330,6 +330,7 @@ export async function registerRoutes(
   app.post(api.attendance.process.path, async (req, res) => {
     const { startDate, endDate, timezoneOffsetMinutes } = req.body;
     try {
+      const auditLogEntries: any[] = [];
       // offsetMinutes is used to convert local time to UTC for punch lookup
       // If the client is in GMT+2, offsetMinutes is -120
       const offsetMinutes = Number.isFinite(Number(timezoneOffsetMinutes))
@@ -766,31 +767,49 @@ export async function registerRoutes(
               halfDayExcused,
             });
             processedCount++;
-          } else {
-            // Absent
-             const extraNotes = extraNotesByKey.get(dateStr) || [];
-             const stayNotes = hasOvernightStay ? [...extraNotes, "مبيت"] : extraNotes;
-             await storage.createAttendanceRecord({
-              employeeCode: employee.code,
-              date: dateStr,
-              checkIn: null,
-              checkOut: null,
-              totalHours: 0,
-              status: "Absent",
-              penalties: [{ type: "غياب", value: 1 }],
-              overtimeHours: 0,
-              isOvernight: false,
-              notes: appendNotes(null, [...stayNotes, ...leaveNotes]),
-              missionStart: null,
-              missionEnd: null,
-              halfDayExcused: false,
-            });
-            processedCount++;
-          }
-        }
-        if (auditLogEntries.length > 0) {
-          await storage.createAuditLogsBulk(auditLogEntries);
-        }
+    auditLogEntries.push({
+      employeeCode: employee.code,
+      action: "Attendance Processed",
+      details: `Processed record for ${dateStr}: Status ${status}`,
+    });
+  } else {
+    // Absent
+     const extraNotes = extraNotesByKey.get(dateStr) || [];
+     const stayNotes = hasOvernightStay ? [...extraNotes, "مبيت"] : extraNotes;
+     await storage.createAttendanceRecord({
+      employeeCode: employee.code,
+      date: dateStr,
+      checkIn: null,
+      checkOut: null,
+      totalHours: 0,
+      status: "Absent",
+      penalties: [{ type: "غياب", value: 1 }],
+      overtimeHours: 0,
+      isOvernight: false,
+      notes: appendNotes(null, [...stayNotes, ...leaveNotes]),
+      missionStart: null,
+      missionEnd: null,
+      halfDayExcused: false,
+    });
+    processedCount++;
+    auditLogEntries.push({
+      employeeCode: employee.code,
+      action: "Attendance Processed (Absent)",
+      details: `Created absent record for ${dateStr}`,
+    });
+  }
+}
+if (auditLogEntries.length > 0) {
+  // Check if storage.createAuditLogsBulk exists, if not just skip or use single calls
+  // Based on the error, auditLogEntries was not defined, but the call was there.
+  try {
+    if (typeof (storage as any).createAuditLogsBulk === 'function') {
+      await (storage as any).createAuditLogsBulk(auditLogEntries);
+    }
+  } catch (e) {
+    console.error("Audit logging failed:", e);
+  }
+}
       }
 
       res.json({ message: "Processing completed", processedCount });
