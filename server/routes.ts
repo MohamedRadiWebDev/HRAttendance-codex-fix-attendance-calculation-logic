@@ -437,7 +437,6 @@ export async function registerRoutes(
                 || (seconds >= windowBStart && seconds <= windowBEnd);
             });
             const extraNotes = extraNotesByKey.get(dateStr) || [];
-            const shiftTrace = `Shift ${currentShiftStart}-${currentShiftEnd} (${shiftSource})`;
             await storage.createAttendanceRecord({
               employeeCode: employee.code,
               date: dateStr,
@@ -448,7 +447,7 @@ export async function registerRoutes(
               overtimeHours: 0,
               penalties: [],
               isOvernight: false,
-              notes: appendNotes(isLeaveDay ? leaveCategory : null, [...extraNotes, shiftTrace]),
+              notes: appendNotes(isLeaveDay ? leaveCategory : null, extraNotes),
               missionStart: null,
               missionEnd: null,
               halfDayExcused: false,
@@ -580,7 +579,6 @@ export async function registerRoutes(
             });
 
             const extraNotes = extraNotesByKey.get(dateStr) || [];
-            const shiftTrace = `Shift ${currentShiftStart}-${currentShiftEnd} (${shiftSource})`;
             await storage.createAttendanceRecord({
               employeeCode: employee.code,
               date: dateStr,
@@ -591,7 +589,7 @@ export async function registerRoutes(
               overtimeHours,
               penalties,
               isOvernight: false,
-              notes: appendNotes(autoNotes || null, [...extraNotes, shiftTrace]),
+              notes: appendNotes(autoNotes || null, extraNotes),
               missionStart,
               missionEnd,
               halfDayExcused,
@@ -600,7 +598,6 @@ export async function registerRoutes(
           } else {
             // Absent
              const extraNotes = extraNotesByKey.get(dateStr) || [];
-             const shiftTrace = `Shift ${currentShiftStart}-${currentShiftEnd} (${shiftSource})`;
              await storage.createAttendanceRecord({
               employeeCode: employee.code,
               date: dateStr,
@@ -611,7 +608,7 @@ export async function registerRoutes(
               penalties: [{ type: "غياب", value: 1 }],
               overtimeHours: 0,
               isOvernight: false,
-              notes: appendNotes(null, [...extraNotes, shiftTrace]),
+              notes: appendNotes(null, extraNotes),
               missionStart: null,
               missionEnd: null,
               halfDayExcused: false,
