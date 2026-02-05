@@ -5,7 +5,8 @@ import {
   insertRuleSchema, specialRules,
   insertAdjustmentSchema, adjustments,
   insertAttendanceSchema, attendanceRecords,
-  insertPunchSchema, biometricPunches
+  insertPunchSchema, biometricPunches,
+  insertLeaveSchema, leaves
 } from './schema';
 
 export const errorSchemas = {
@@ -151,6 +152,55 @@ export const api = {
           source: z.string().optional(),
           sourceFileName: z.string().optional(),
           note: z.string().nullable().optional(),
+        })),
+      }),
+      responses: {
+        200: z.object({
+          inserted: z.number(),
+          invalid: z.array(z.object({
+            rowIndex: z.number(),
+            reason: z.string(),
+          })),
+        }),
+        400: errorSchemas.validation,
+      },
+    },
+  },
+  leaves: {
+    list: {
+      method: 'GET' as const,
+      path: '/api/leaves',
+      responses: {
+        200: z.array(z.custom<typeof leaves.$inferSelect>()),
+      },
+    },
+    create: {
+      method: 'POST' as const,
+      path: '/api/leaves',
+      input: insertLeaveSchema,
+      responses: {
+        201: z.custom<typeof leaves.$inferSelect>(),
+      },
+    },
+    delete: {
+      method: 'DELETE' as const,
+      path: '/api/leaves/:id',
+      responses: {
+        204: z.void(),
+      },
+    },
+    import: {
+      method: 'POST' as const,
+      path: '/api/leaves/import',
+      input: z.object({
+        rows: z.array(z.object({
+          rowIndex: z.number().optional(),
+          type: z.string(),
+          scope: z.string(),
+          scopeValue: z.string().optional(),
+          startDate: z.string(),
+          endDate: z.string(),
+          note: z.string().optional(),
         })),
       }),
       responses: {

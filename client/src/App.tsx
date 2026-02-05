@@ -12,6 +12,7 @@ import Rules from "@/pages/Rules";
 import Templates from "@/pages/Templates";
 import Adjustments from "@/pages/Adjustments";
 import BulkAdjustmentsImport from "@/pages/BulkAdjustmentsImport";
+import Leaves from "@/pages/Leaves";
 
 function Router() {
   return (
@@ -24,6 +25,7 @@ function Router() {
       <Route path="/templates" component={Templates} />
       <Route path="/adjustments" component={Adjustments} />
       <Route path="/bulk-adjustments" component={BulkAdjustmentsImport} />
+      <Route path="/leaves" component={Leaves} />
       <Route component={NotFound} />
     </Switch>
   );

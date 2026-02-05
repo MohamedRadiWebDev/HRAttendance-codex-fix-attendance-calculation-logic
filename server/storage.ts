@@ -4,7 +4,8 @@ import {
   excelTemplates, type Template, type InsertTemplate,
   specialRules, type SpecialRule, type InsertSpecialRule,
   adjustments, type Adjustment, type InsertAdjustment,
-  attendanceRecords, type AttendanceRecord, type InsertAttendanceRecord
+  attendanceRecords, type AttendanceRecord, type InsertAttendanceRecord,
+  leaves, type Leave, type InsertLeave
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, and, gte, lte, inArray, sql, desc } from "drizzle-orm";
@@ -53,6 +54,13 @@ export interface IStorage {
   createAttendanceRecord(record: InsertAttendanceRecord): Promise<AttendanceRecord>;
   updateAttendanceRecord(id: number, record: Partial<InsertAttendanceRecord>): Promise<AttendanceRecord>;
   getAttendanceRecord(employeeCode: string, date: string): Promise<AttendanceRecord | undefined>;
+
+  // Leaves
+  getLeaves(): Promise<Leave[]>;
+  createLeave(leave: InsertLeave): Promise<Leave>;
+  deleteLeave(id: number): Promise<void>;
+  createLeavesBulk(leaves: InsertLeave[]): Promise<Leave[]>;
+
   
   // Bulk operations for import
   createEmployeesBulk(employees: InsertEmployee[]): Promise<Employee[]>;
@@ -70,6 +78,7 @@ export class DatabaseStorage implements IStorage {
     await db.delete(biometricPunches);
     await db.delete(employees);
     await db.delete(excelTemplates);
+    await db.delete(leaves);
   }
 
   // Employees
@@ -292,6 +301,26 @@ export class DatabaseStorage implements IStorage {
       .where(and(eq(attendanceRecords.employeeCode, employeeCode), eq(attendanceRecords.date, date)));
     return record;
   }
+
+  // Leaves
+  async getLeaves(): Promise<Leave[]> {
+    return await db.select().from(leaves);
+  }
+
+  async createLeave(insertLeave: InsertLeave): Promise<Leave> {
+    const [leave] = await db.insert(leaves).values(insertLeave).returning();
+    return leave;
+  }
+
+  async deleteLeave(id: number): Promise<void> {
+    await db.delete(leaves).where(eq(leaves.id, id));
+  }
+
+  async createLeavesBulk(insertLeaves: InsertLeave[]): Promise<Leave[]> {
+    if (insertLeaves.length === 0) return [];
+    return await db.insert(leaves).values(insertLeaves).returning();
+  }
+
 
   // Bulk
   async createEmployeesBulk(insertEmployees: InsertEmployee[]): Promise<Employee[]> {
