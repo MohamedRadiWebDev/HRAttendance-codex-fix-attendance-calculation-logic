@@ -8,7 +8,8 @@ import {
   Settings, 
   Upload, 
   Briefcase,
-  ClipboardList
+  ClipboardList,
+  ScrollText
 } from "lucide-react";
 
 const navigation = [
