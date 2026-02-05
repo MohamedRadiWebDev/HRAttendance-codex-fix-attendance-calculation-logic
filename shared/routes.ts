@@ -6,8 +6,7 @@ import {
   insertAdjustmentSchema, adjustments,
   insertAttendanceSchema, attendanceRecords,
   insertPunchSchema, biometricPunches,
-  insertLeaveSchema, leaves,
-  auditLogs
+  insertLeaveSchema, leaves
 } from './schema';
 
 export const errorSchemas = {
@@ -213,20 +212,6 @@ export const api = {
           })),
         }),
         400: errorSchemas.validation,
-      },
-    },
-  },
-  auditLogs: {
-    list: {
-      method: 'GET' as const,
-      path: '/api/audit-logs',
-      input: z.object({
-        startDate: z.string().optional(),
-        endDate: z.string().optional(),
-        employeeCode: z.string().optional(),
-      }).optional(),
-      responses: {
-        200: z.array(z.custom<typeof auditLogs.$inferSelect>()),
       },
     },
   },

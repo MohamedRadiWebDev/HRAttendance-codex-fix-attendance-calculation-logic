@@ -112,14 +112,6 @@ export const leaves = pgTable("leaves", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
-export const auditLogs = pgTable("audit_logs", {
-  id: serial("id").primaryKey(),
-  employeeCode: text("employee_code").notNull(),
-  date: text("date").notNull(),
-  action: text("action").notNull(),
-  details: jsonb("details"),
-  timestamp: timestamp("timestamp").defaultNow(),
-});
 
 // Zod Schemas
 export const insertEmployeeSchema = createInsertSchema(employees).omit({ id: true });

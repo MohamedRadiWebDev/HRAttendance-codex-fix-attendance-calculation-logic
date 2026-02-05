@@ -146,6 +146,16 @@ export async function registerRoutes(
   app.post(api.leaves.create.path, async (req, res) => {
     try {
       const input = api.leaves.create.input.parse(req.body);
+      const existingLeaves = await storage.getLeaves();
+      const hasOverlap = existingLeaves.some((leave) => {
+        if (leave.type !== input.type) return false;
+        if (leave.scope !== input.scope) return false;
+        if ((leave.scopeValue || null) !== (input.scopeValue || null)) return false;
+        return !(input.endDate < leave.startDate || input.startDate > leave.endDate);
+      });
+      if (hasOverlap) {
+        return res.status(400).json({ message: "تداخل في الإجازات" });
+      }
       const leave = await storage.createLeave(input);
       res.status(201).json(leave);
     } catch (err) {
@@ -162,6 +172,7 @@ export async function registerRoutes(
     try {
       const { rows } = api.leaves.import.input.parse(req.body);
       const employees = await storage.getEmployees();
+      const existingLeaves = await storage.getLeaves();
       const sectors = new Set(employees.map((emp) => emp.sector).filter(Boolean));
       const departments = new Set(employees.map((emp) => emp.department).filter(Boolean));
       const sections = new Set(employees.map((emp) => emp.section).filter(Boolean));
@@ -210,6 +221,16 @@ export async function registerRoutes(
           invalid.push({ rowIndex: row.rowIndex ?? 0, reason: "تاريخ البداية بعد النهاية" });
           return false;
         }
+        const hasOverlap = existingLeaves.some((leave) => {
+          if (leave.type !== row.type) return false;
+          if (leave.scope !== row.scope) return false;
+          if ((leave.scopeValue || null) !== (row.scopeValue || null)) return false;
+          return !(row.endDate < leave.startDate || row.startDate > leave.endDate);
+        });
+        if (hasOverlap) {
+          invalid.push({ rowIndex: row.rowIndex ?? 0, reason: "تداخل في الإجازات" });
+          return false;
+        }
         return true;
       }).map((row: any) => ({
         type: row.type,
@@ -227,17 +248,6 @@ export async function registerRoutes(
     } catch (err) {
       res.status(400).json({ message: "Invalid input" });
     }
-  });
-
-  // Audit logs
-  app.get(api.auditLogs.list.path, async (req, res) => {
-    const { startDate, endDate, employeeCode } = req.query;
-    const logs = await storage.getAuditLogs({
-      startDate: startDate ? String(startDate) : undefined,
-      endDate: endDate ? String(endDate) : undefined,
-      employeeCode: employeeCode ? String(employeeCode) : undefined,
-    });
-    res.json(logs);
   });
 
   app.post(api.adjustments.create.path, async (req, res) => {
@@ -388,16 +398,10 @@ export async function registerRoutes(
         });
 
         const extraNotesByKey = new Map<string, string[]>();
-        const linkedPunchInfoByKey = new Map<string, { originalDate: string; timeLabel: string; reason: string }[]>();
         const addExtraNote = (key: string, note: string) => {
           const existing = extraNotesByKey.get(key) || [];
           existing.push(note);
           extraNotesByKey.set(key, existing);
-        };
-        const addLinkedInfo = (key: string, info: { originalDate: string; timeLabel: string; reason: string }) => {
-          const existing = linkedPunchInfoByKey.get(key) || [];
-          existing.push(info);
-          linkedPunchInfoByKey.set(key, existing);
         };
 
         const shiftStartHour = Number.parseInt((employee.shiftStart || "09:00").split(":")[0], 10);
@@ -434,35 +438,6 @@ export async function registerRoutes(
           ));
           shiftTimeUTC.setTime(shiftTimeUTC.getTime() + offsetMinutes * 60 * 1000);
           return shiftTimeUTC;
-        };
-        const formatLocalDateTime = (date: Date) => (
-          `${formatLocalDay(date)} ${String(date.getUTCHours()).padStart(2, "0")}:${String(date.getUTCMinutes()).padStart(2, "0")}`
-        );
-        const buildAuditDetails = ({
-          linkedInfo,
-          hasOvernightStay,
-          checkInDateTime,
-          checkOutDateTime,
-          overtimeStart,
-          overtimeHours,
-        }: {
-          linkedInfo: { originalDate: string; timeLabel: string; reason: string }[];
-          hasOvernightStay: boolean;
-          checkInDateTime: Date | null;
-          checkOutDateTime: Date | null;
-          overtimeStart: Date;
-          overtimeHours: number;
-        }) => ({
-          linkedPunches: linkedInfo,
-          overnightStay: hasOvernightStay,
-          checkInDateTime: checkInDateTime ? formatLocalDateTime(checkInDateTime) : null,
-          checkOutDateTime: checkOutDateTime ? formatLocalDateTime(checkOutDateTime) : null,
-          overtimeStart: formatLocalDateTime(overtimeStart),
-          overtimeHours,
-        });
-        const auditLogEntries: { employeeCode: string; date: string; action: string; details: any }[] = [];
-        const addAuditLog = (entry: { employeeCode: string; date: string; action: string; details: any }) => {
-          auditLogEntries.push(entry);
         };
         const matchesScope = (scope: string, value: string | null | undefined) => {
           if (scope === "all") return true;
@@ -524,11 +499,6 @@ export async function registerRoutes(
 
               const timeLabel = `${String(localPunch.getUTCHours()).padStart(2, "0")}:${String(localPunch.getUTCMinutes()).padStart(2, "0")}`;
               addExtraNote(prevDateStr, `خروج بعد منتصف الليل ${timeLabel} (${dateStr})`);
-              addLinkedInfo(prevDateStr, {
-                originalDate: dateStr,
-                timeLabel,
-                reason: !hasPrevCheckOut ? "لا يوجد خروج سابق" : "وجود بصمة حضور صباحي",
-              });
             }
           });
         }
@@ -615,7 +585,6 @@ export async function registerRoutes(
               return (seconds >= windowAStart && seconds <= windowAEnd)
                 || (seconds >= windowBStart && seconds <= windowBEnd);
             });
-            const linkedInfo = linkedPunchInfoByKey.get(dateStr) || [];
             const nextDay = new Date(d);
             nextDay.setUTCDate(nextDay.getUTCDate() + 1);
             const nextDayShiftStartUTC = toUtcFromSeconds(nextDay, timeStringToSeconds(currentShiftStart));
@@ -623,21 +592,6 @@ export async function registerRoutes(
             const overtimeStart = new Date(
               toUtcFromSeconds(d, timeStringToSeconds(currentShiftEnd)).getTime() + 60 * 60 * 1000
             );
-            if (linkedInfo.length > 0 || hasOvernightStay) {
-              addAuditLog({
-                employeeCode: employee.code,
-                date: dateStr,
-                action: "overnight_check",
-                details: buildAuditDetails({
-                  linkedInfo,
-                  hasOvernightStay,
-                  checkInDateTime: checkInLocal,
-                  checkOutDateTime: effectiveCheckOutDateTime,
-                  overtimeStart,
-                  overtimeHours: 0,
-                }),
-              });
-            }
             const extraNotes = extraNotesByKey.get(dateStr) || [];
             const stayNotes = hasOvernightStay ? [...extraNotes, "مبيت"] : extraNotes;
             await storage.createAttendanceRecord({
@@ -692,7 +646,7 @@ export async function registerRoutes(
             const firstStampSeconds = adjustmentEffects.firstStampSeconds;
             const lastStampSeconds = adjustmentEffects.lastStampSeconds;
             const checkInDateTime = checkInLocal;
-            const checkOutDateTime = checkOutLocal;
+            const checkOutDateTime = hasOvernightStay ? null : checkOutLocal;
             if (checkInDateTime && checkOutDateTime) {
               const diffMs = checkOutDateTime.getTime() - checkInDateTime.getTime();
               totalHours = diffMs > 0 ? diffMs / (1000 * 60 * 60) : 0;
@@ -711,7 +665,7 @@ export async function registerRoutes(
             const excusedByHalfDayNoPunch = halfDayExcused && !checkIn && !checkOut;
             const excusedByMission = hasMission;
             const excusedDay = excusedByHalfDayNoPunch || excusedByMission;
-            const isExcusedForPenalties = excusedDay || suppressPenalties;
+            const isExcusedForPenalties = excusedDay || suppressPenalties || hasOvernightStay;
             let latePenaltyValue = 0;
             let lateMinutes = 0;
 
@@ -731,9 +685,12 @@ export async function registerRoutes(
               status = "Absent";
               penalties.push({ type: "غياب", value: 1 });
             }
+            if (hasOvernightStay) {
+              status = "Present";
+            }
 
             const effectiveCheckOutForPenalties = hasOvernightStay ? null : checkOut;
-            const missingCheckout = Boolean(checkIn && !effectiveCheckOutForPenalties) && !isExcusedForPenalties && !hasOvernightStay;
+            const missingCheckout = Boolean(checkIn && !effectiveCheckOutForPenalties) && !isExcusedForPenalties;
             const earlyLeaveThreshold = effectiveShiftEndUTC.getTime() - graceMinutes * 60 * 1000;
             const earlyLeaveTriggered = Boolean(
               effectiveCheckOutForPenalties &&
@@ -763,7 +720,7 @@ export async function registerRoutes(
               checkInExists: Boolean(checkIn),
               checkOutExists: Boolean(checkOut),
               missingStampExcused: excusedDay || hasOvernightStay,
-              earlyLeaveExcused: excusedDay,
+              earlyLeaveExcused: excusedDay || hasOvernightStay,
               checkOutBeforeEarlyLeave: Boolean(effectiveCheckOutForPenalties && effectiveCheckOutForPenalties.getTime() < earlyLeaveThreshold),
             });
 
@@ -790,26 +747,9 @@ export async function registerRoutes(
               }
             }
 
-            const linkedInfo = linkedPunchInfoByKey.get(dateStr) || [];
-            if (linkedInfo.length > 0 || hasOvernightStay) {
-              addAuditLog({
-                employeeCode: employee.code,
-                date: dateStr,
-                action: "overnight_check",
-                details: buildAuditDetails({
-                  linkedInfo,
-                  hasOvernightStay,
-                  checkInDateTime,
-                  checkOutDateTime: effectiveCheckOutDateTime,
-                  overtimeStart,
-                  overtimeHours,
-                }),
-              });
-            }
-
             const extraNotes = extraNotesByKey.get(dateStr) || [];
             const stayNotes = hasOvernightStay ? [...extraNotes, "مبيت"] : extraNotes;
-            const recordCheckOut = hasOvernightStay ? nextDayShiftStartUTC : checkOut;
+            const recordCheckOut = hasOvernightStay ? null : checkOut;
             await storage.createAttendanceRecord({
               employeeCode: employee.code,
               date: dateStr,
