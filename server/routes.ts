@@ -15,6 +15,7 @@ import {
   secondsToHms,
   timeStringToSeconds,
 } from "./attendance-utils";
+import { normalizeEmpCode, parseEmpScope } from "./rule-scope";
 
 export async function registerRoutes(
   httpServer: Server,
@@ -375,6 +376,15 @@ export async function registerRoutes(
       const rules = await storage.getRules();
       const leaves = await storage.getLeaves();
       const adjustments = await storage.getAdjustments();
+
+      const empScopeCache = new Map<string, Set<string>>();
+      const getEmpScopeSet = (scope: string, cacheKey: string) => {
+        const cached = empScopeCache.get(cacheKey);
+        if (cached) return cached;
+        const parsed = parseEmpScope(scope);
+        empScopeCache.set(cacheKey, parsed);
+        return parsed;
+      };
       
       let processedCount = 0;
 
@@ -391,6 +401,7 @@ export async function registerRoutes(
       const endLocal = new Date(Date.UTC(endYear, endMonth - 1, endDay));
 
       for (const employee of allEmployees) {
+        const normalizedEmployeeCode = normalizeEmpCode(employee.code);
         const punchesByDate = new Map<string, typeof punches>();
         punches.forEach((punch) => {
           if (punch.employeeCode !== employee.code) return;
@@ -535,7 +546,11 @@ export async function registerRoutes(
             if (r.scope === 'all') return true;
             if (r.scope.startsWith('dept:') && employee.department === r.scope.replace('dept:', '')) return true;
             if (r.scope.startsWith('sector:') && employee.sector === r.scope.replace('sector:', '')) return true;
-            if (r.scope.startsWith('emp:') && employee.code === r.scope.replace('emp:', '')) return true;
+            if (r.scope.startsWith('emp:')) {
+              const cacheKey = `${r.id ?? "no-id"}:${r.scope}`;
+              const empScopeSet = getEmpScopeSet(r.scope, cacheKey);
+              return empScopeSet.has(normalizedEmployeeCode);
+            }
             return false;
           }).sort((a, b) => (b.priority || 0) - (a.priority || 0));
 
