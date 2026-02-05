@@ -377,17 +377,25 @@ export async function registerRoutes(
             return false;
           }).sort((a, b) => (b.priority || 0) - (a.priority || 0));
 
-          // 2. Determine shift times based on rules or employee default
-          let currentShiftStart = employee.shiftStart || "09:00";
+          // 2. Determine shift times based on rules or defaults (Saturday has a different default)
+          const dayOfWeek = d.getUTCDay();
+          const isSaturday = dayOfWeek === 6;
+          let currentShiftStart = "09:00";
           let currentShiftEnd = "17:00"; // Default 8 hours
+          let shiftSource = "Normal Default";
           
           const shiftRule = activeRules.find(r => r.ruleType === 'custom_shift');
           if (shiftRule) {
             currentShiftStart = (shiftRule.params as any).shiftStart || currentShiftStart;
             currentShiftEnd = (shiftRule.params as any).shiftEnd || currentShiftEnd;
+            shiftSource = "Rule Override";
+          } else if (isSaturday) {
+            currentShiftStart = "10:00";
+            currentShiftEnd = "16:00";
+            shiftSource = "Saturday Default";
           }
 
-          const isFriday = d.getUTCDay() === 5;
+          const isFriday = dayOfWeek === 5;
           const leaveRule = activeRules.find(r => r.ruleType === "attendance_exempt");
           const leaveTypeRaw = typeof (leaveRule?.params as any)?.leaveType === "string"
             ? String((leaveRule?.params as any)?.leaveType).toLowerCase()
@@ -429,6 +437,7 @@ export async function registerRoutes(
                 || (seconds >= windowBStart && seconds <= windowBEnd);
             });
             const extraNotes = extraNotesByKey.get(dateStr) || [];
+            const shiftTrace = `Shift ${currentShiftStart}-${currentShiftEnd} (${shiftSource})`;
             await storage.createAttendanceRecord({
               employeeCode: employee.code,
               date: dateStr,
@@ -439,7 +448,7 @@ export async function registerRoutes(
               overtimeHours: 0,
               penalties: [],
               isOvernight: false,
-              notes: appendNotes(isLeaveDay ? leaveCategory : null, extraNotes),
+              notes: appendNotes(isLeaveDay ? leaveCategory : null, [...extraNotes, shiftTrace]),
               missionStart: null,
               missionEnd: null,
               halfDayExcused: false,
@@ -571,6 +580,7 @@ export async function registerRoutes(
             });
 
             const extraNotes = extraNotesByKey.get(dateStr) || [];
+            const shiftTrace = `Shift ${currentShiftStart}-${currentShiftEnd} (${shiftSource})`;
             await storage.createAttendanceRecord({
               employeeCode: employee.code,
               date: dateStr,
@@ -581,7 +591,7 @@ export async function registerRoutes(
               overtimeHours,
               penalties,
               isOvernight: false,
-              notes: appendNotes(autoNotes || null, extraNotes),
+              notes: appendNotes(autoNotes || null, [...extraNotes, shiftTrace]),
               missionStart,
               missionEnd,
               halfDayExcused,
@@ -590,6 +600,7 @@ export async function registerRoutes(
           } else {
             // Absent
              const extraNotes = extraNotesByKey.get(dateStr) || [];
+             const shiftTrace = `Shift ${currentShiftStart}-${currentShiftEnd} (${shiftSource})`;
              await storage.createAttendanceRecord({
               employeeCode: employee.code,
               date: dateStr,
@@ -600,7 +611,7 @@ export async function registerRoutes(
               penalties: [{ type: "غياب", value: 1 }],
               overtimeHours: 0,
               isOvernight: false,
-              notes: appendNotes(null, extraNotes),
+              notes: appendNotes(null, [...extraNotes, shiftTrace]),
               missionStart: null,
               missionEnd: null,
               halfDayExcused: false,
