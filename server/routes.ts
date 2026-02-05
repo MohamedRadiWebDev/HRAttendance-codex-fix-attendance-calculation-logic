@@ -15,7 +15,7 @@ import {
   secondsToHms,
   timeStringToSeconds,
 } from "./attendance-utils";
-import { normalizeEmpCode, parseEmpScope } from "./rule-scope";
+import { parseRuleScope } from "@shared/rule-scope";
 
 export async function registerRoutes(
   httpServer: Server,
@@ -377,12 +377,12 @@ export async function registerRoutes(
       const leaves = await storage.getLeaves();
       const adjustments = await storage.getAdjustments();
 
-      const empScopeCache = new Map<string, Set<string>>();
-      const getEmpScopeSet = (scope: string, cacheKey: string) => {
-        const cached = empScopeCache.get(cacheKey);
+      const scopeCache = new Map<string, ReturnType<typeof parseRuleScope>>();
+      const getParsedScope = (scope: string, cacheKey: string) => {
+        const cached = scopeCache.get(cacheKey);
         if (cached) return cached;
-        const parsed = parseEmpScope(scope);
-        empScopeCache.set(cacheKey, parsed);
+        const parsed = parseRuleScope(scope);
+        scopeCache.set(cacheKey, parsed);
         return parsed;
       };
       
@@ -401,7 +401,7 @@ export async function registerRoutes(
       const endLocal = new Date(Date.UTC(endYear, endMonth - 1, endDay));
 
       for (const employee of allEmployees) {
-        const normalizedEmployeeCode = normalizeEmpCode(employee.code);
+        const normalizedEmployeeCode = String(employee.code ?? "").trim();
         const punchesByDate = new Map<string, typeof punches>();
         punches.forEach((punch) => {
           if (punch.employeeCode !== employee.code) return;
@@ -548,8 +548,8 @@ export async function registerRoutes(
             if (r.scope.startsWith('sector:') && employee.sector === r.scope.replace('sector:', '')) return true;
             if (r.scope.startsWith('emp:')) {
               const cacheKey = `${r.id ?? "no-id"}:${r.scope}`;
-              const empScopeSet = getEmpScopeSet(r.scope, cacheKey);
-              return empScopeSet.has(normalizedEmployeeCode);
+              const parsedScope = getParsedScope(r.scope, cacheKey);
+              return parsedScope.type === "emp" && parsedScope.values.includes(normalizedEmployeeCode);
             }
             return false;
           }).sort((a, b) => (b.priority || 0) - (a.priority || 0));
