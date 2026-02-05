@@ -83,7 +83,7 @@ export const adjustments = pgTable(
   })
 );
 
-// Storing calculated attendance for performance/audit
+// Storing calculated attendance for performance
 export const attendanceRecords = pgTable("attendance_records", {
   id: serial("id").primaryKey(),
   employeeCode: text("employee_code").notNull(),
