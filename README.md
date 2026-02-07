@@ -90,18 +90,18 @@ All data is processed in-memory in the browser. No database or backend is requir
 
 1.  Push the repository to GitHub.
 2.  In Vercel, click **New Project** and import the repo.
-3.  Framework preset: **Vite**.
-4.  Build Command: `npm run build`
-5.  Output Directory: `dist/public`
-6.  Deploy.
+3.  Root Directory: **/** (repo root).
+4.  Framework preset: **Vite**.
+5.  Build Command: `npm run build`
+6.  Output Directory: `dist`
+7.  Deploy.
 
-To enable SPA routing on refresh, the repo includes a `vercel.json` rewrite rule.
+To enable SPA routing on refresh, the repo includes a `vercel.json` rewrite rule and explicit build/output settings.
 
 ## 🛠️ Troubleshooting
 
 - **Excel date parsing**: Ensure the `History` columns in Excel are formatted as `Date/Time` or `Text` according to the template mapping.
 - **Missing Punches**: Check if the employee code in the biometric file matches the `code` field in the Employee table exactly.
-- **Workflow Error**: If the server fails to start, ensure `tsx` is available and `DATABASE_URL` is valid.
 
 ## 📜 License
 Internal Enterprise License. Contact HR for details.
