@@ -341,7 +341,6 @@ export async function registerRoutes(
   app.post(api.attendance.process.path, async (req, res) => {
     const { startDate, endDate, timezoneOffsetMinutes } = req.body;
     try {
-      const auditLogEntries: any[] = [];
       // offsetMinutes is used to convert local time to UTC for punch lookup
       // If the client is in GMT+2, offsetMinutes is -120
       const offsetMinutes = Number.isFinite(Number(timezoneOffsetMinutes))
