@@ -68,30 +68,6 @@ export async function registerRoutes(
     }
   });
 
-  // Templates
-  app.get(api.templates.list.path, async (req, res) => {
-    const templates = await storage.getTemplates();
-    res.json(templates);
-  });
-
-  app.post(api.templates.create.path, async (req, res) => {
-    try {
-      const input = api.templates.create.input.parse(req.body);
-      const template = await storage.createTemplate(input);
-      res.status(201).json(template);
-    } catch (err) {
-      if (err instanceof z.ZodError) {
-        return res.status(400).json({ message: "Invalid input" });
-      }
-      throw err;
-    }
-  });
-
-  app.delete(api.templates.delete.path, async (req, res) => {
-    await storage.deleteTemplate(Number(req.params.id));
-    res.status(204).end();
-  });
-
   // Rules
   app.get(api.rules.list.path, async (req, res) => {
     const rules = await storage.getRules();

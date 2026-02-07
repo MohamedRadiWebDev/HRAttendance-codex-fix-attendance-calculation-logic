@@ -22,7 +22,6 @@ function Router() {
       <Route path="/attendance" component={Attendance} />
       <Route path="/import" component={Import} />
       <Route path="/rules" component={Rules} />
-      <Route path="/templates" component={Templates} />
       <Route path="/adjustments" component={Adjustments} />
       <Route path="/bulk-adjustments" component={BulkAdjustmentsImport} />
       <Route path="/leaves" component={Leaves} />

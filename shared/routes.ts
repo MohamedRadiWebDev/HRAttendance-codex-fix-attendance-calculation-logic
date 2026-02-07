@@ -58,30 +58,6 @@ export const api = {
       },
     },
   },
-  templates: {
-    list: {
-      method: 'GET' as const,
-      path: '/api/templates',
-      responses: {
-        200: z.array(z.custom<typeof excelTemplates.$inferSelect>()),
-      },
-    },
-    create: {
-      method: 'POST' as const,
-      path: '/api/templates',
-      input: insertTemplateSchema,
-      responses: {
-        201: z.custom<typeof excelTemplates.$inferSelect>(),
-      },
-    },
-    delete: {
-      method: 'DELETE' as const,
-      path: '/api/templates/:id',
-      responses: {
-        204: z.void(),
-      },
-    }
-  },
   rules: {
     list: {
       method: 'GET' as const,
