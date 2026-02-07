@@ -1,5 +1,4 @@
-import { Bell, Search, User } from "lucide-react";
-import { Input } from "@/components/ui/input";
+import { User } from "lucide-react";
 
 export function Header({ title }: { title: string }) {
   return (
@@ -7,19 +6,6 @@ export function Header({ title }: { title: string }) {
       <h2 className="text-xl font-bold font-display text-foreground">{title}</h2>
       
       <div className="flex items-center gap-4">
-        <div className="relative hidden md:block w-64">
-          <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-          <Input 
-            placeholder="بحث..." 
-            className="pr-10 bg-slate-50 border-transparent focus:bg-white focus:border-primary/50 transition-all" 
-          />
-        </div>
-        
-        <button className="relative w-10 h-10 rounded-full bg-slate-50 hover:bg-slate-100 flex items-center justify-center transition-colors border border-border/50">
-          <Bell className="w-5 h-5 text-muted-foreground" />
-          <span className="absolute top-2 left-2 w-2 h-2 bg-red-500 rounded-full border border-white"></span>
-        </button>
-        
         <div className="flex items-center gap-3 border-r border-border/50 pr-4 mr-1">
           <div className="text-left hidden sm:block">
             <p className="text-sm font-semibold">مدير النظام</p>
