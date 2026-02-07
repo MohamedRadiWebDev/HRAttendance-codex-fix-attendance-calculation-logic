@@ -1,10 +1,10 @@
-import { useMemo, useState, useRef } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import { Sidebar } from "@/components/Sidebar";
 import { Header } from "@/components/Header";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Plus, Trash2, Settings2, ShieldCheck, Download, Upload, Pencil } from "lucide-react";
-import { useRules, useDeleteRule, useCreateRule, useUpdateRule } from "@/hooks/use-data";
+import { useRules, useDeleteRule, useCreateRule, useUpdateRule, useImportRules } from "@/hooks/use-data";
 import { useEmployees } from "@/hooks/use-employees";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
@@ -17,14 +17,13 @@ import { format, parse } from "date-fns";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { buildEmpScope, parseRuleScope } from "@shared/rule-scope";
 import { insertRuleSchema, RULE_TYPES, type SpecialRule } from "@shared/schema";
-import { apiRequest, queryClient } from "@/lib/queryClient";
 
 export default function Rules() {
   const { data: rules, isLoading } = useRules();
   const deleteRule = useDeleteRule();
+  const importRules = useImportRules();
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [editingRule, setEditingRule] = useState<SpecialRule | null>(null);
 
   const handleDelete = async (id: number) => {
     if (!confirm("هل أنت متأكد من حذف هذه القاعدة؟")) return;
@@ -57,8 +56,7 @@ export default function Rules() {
         const content = JSON.parse(event.target?.result as string);
         // Clean IDs before importing
         const rulesToImport = content.map(({ id, ...rest }: any) => rest);
-        await apiRequest("POST", "/api/rules/import", rulesToImport);
-        queryClient.invalidateQueries({ queryKey: ["/api/rules"] });
+        await importRules.mutateAsync(rulesToImport);
         toast({ title: "نجاح", description: "تم استيراد القواعد بنجاح" });
       } catch (err: any) {
         toast({ title: "خطأ", description: "فشل استيراد القواعد. تأكد من صحة الملف.", variant: "destructive" });
@@ -182,6 +180,19 @@ function AddRuleDialog({ rule }: { rule?: SpecialRule }) {
     }
   });
   const params = form.watch("params") as any;
+
+  useEffect(() => {
+    if (!rule) return;
+    form.reset({
+      name: rule.name,
+      priority: rule.priority || 0,
+      scope: rule.scope,
+      startDate: format(new Date(rule.startDate), "dd/MM/yyyy"),
+      endDate: format(new Date(rule.endDate), "dd/MM/yyyy"),
+      ruleType: rule.ruleType,
+      params: rule.params,
+    });
+  }, [form, rule]);
 
   const onSubmit = (data: any) => {
     const parsedScope = parseRuleScope(data.scope);

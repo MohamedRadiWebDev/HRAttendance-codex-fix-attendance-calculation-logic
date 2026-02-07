@@ -9,11 +9,13 @@ import { useEmployees } from "@/hooks/use-employees";
 import { format, parse } from "date-fns";
 import { useEffect, useRef, useState } from "react";
 import { Input } from "@/components/ui/input";
+import { useAttendanceStore, type AttendanceStoreState } from "@/store/attendanceStore";
 
 const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444'];
 
 export default function Dashboard() {
   const { data: employees } = useEmployees();
+  const wipeData = useAttendanceStore((state: AttendanceStoreState) => state.wipeData);
   const [dateInput, setDateInput] = useState({ start: "", end: "" });
   const [dateRange, setDateRange] = useState<{ start?: string; end?: string }>({});
   const hasInitialized = useRef(false);
@@ -147,12 +149,9 @@ export default function Dashboard() {
                   className="gap-2"
                   onClick={() => {
                     if (window.confirm("هل أنت متأكد من مسح كافة بيانات الموقع؟ لا يمكن التراجع عن هذا الإجراء.")) {
-                      fetch("/api/admin/wipe-data", { method: "POST" })
-                        .then(res => res.json())
-                        .then(data => {
-                          window.alert(data.message);
-                          window.location.reload();
-                        });
+                      wipeData();
+                      window.alert("تم مسح كافة البيانات بنجاح");
+                      window.location.reload();
                     }
                   }}
                 >
