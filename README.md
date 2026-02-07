@@ -93,10 +93,10 @@ All data is processed in-memory in the browser. No database or backend is requir
 3.  Root Directory: **/** (repo root).
 4.  Framework preset: **Vite**.
 5.  Build Command: `npm run build`
-6.  Output Directory: `dist`
+6.  Output Directory: `dist/public`
 7.  Deploy.
 
-To enable SPA routing on refresh, the repo includes a `vercel.json` rewrite rule and explicit build/output settings.
+To enable SPA routing on refresh, the repo includes a `vercel.json` rewrite rule and explicit build/output settings that match `vite.config.ts`.
 
 ## 🛠️ Troubleshooting
 
