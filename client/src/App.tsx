@@ -9,7 +9,6 @@ import Employees from "@/pages/Employees";
 import Attendance from "@/pages/Attendance";
 import Import from "@/pages/Import";
 import Rules from "@/pages/Rules";
-import Templates from "@/pages/Templates";
 import Adjustments from "@/pages/Adjustments";
 import BulkAdjustmentsImport from "@/pages/BulkAdjustmentsImport";
 import Leaves from "@/pages/Leaves";
