@@ -1,0 +1,149 @@
+# HR Attendance & Payroll System (نظام الحضور والانصراف والرواتب)
+
+A comprehensive, production-ready HR management system tailored for Arabic-speaking organizations. The system handles biometric attendance data processing, payroll calculations, and advanced rule-based policy enforcement with a full RTL (Right-to-Left) interface.
+
+## 🚀 Features
+
+- **Employee Management**: Comprehensive records with Arabic support, sector-wise categorization, and shift assignments.
+- **Biometric Integration**: Import raw punch data from Excel files with flexible column mapping.
+- **Attendance Engine**: Automated processing of daily records including:
+  - Late arrival and early departure detection.
+  - Missing stamp identification (سهو بصمة).
+  - Overtime calculation (including overnight stays).
+  - Friday and holiday management.
+- **Rule Engine**: Priority-based special rules for custom shifts, exemptions, and penalty overrides.
+- **Adjustments & Leaves**: Management of missions (مأموريات), permissions (أذونات), and half-day leaves.
+- **Excel Workflow**: Customizable templates for importing attendance and exporting detailed/summary reports.
+- **RTL Dashboard**: Real-time analytics and statistics in Arabic.
+
+## 📱 Screens & Pages
+
+- **Dashboard (الرئيسية)**: Overview of attendance stats, employee counts, and daily activity.
+- **Employees (الموظفين)**: Master data management for all staff.
+- **Attendance (الحضور والانصراف)**: The core processing area where raw data becomes actionable records.
+- **Import (الاستيراد)**: Wizard for uploading biometric Excel files using templates.
+- **Adjustments (التسويات)**: Logging specific time-based events like missions or short permissions.
+- **Leaves (الإجازات)**: Calendar-based management of official and personal leaves.
+- **Rules (القواعد الخاصة)**: Configuration of exceptions and specific shift timings.
+
+## ⚖️ Business Rules Summary
+
+| Term (Arabic) | Logic / Calculation |
+| :--- | :--- |
+| **الحضور (Check-in)** | Earliest valid punch within the arrival window. |
+| **الانصراف (Check-out)** | Latest valid punch before or after shift end. |
+| **تأخير (Late)** | Computed after a grace period from the assigned `shift_start`. |
+| **انصراف مبكر (Early Leave)** | Triggered if checkout is before `shift_end` (usually 0.5 day penalty). |
+| **سهو بصمة (Missing Stamp)** | Single punch detected without a corresponding entry/exit. |
+| **مبيت (Overnight)** | Detected if checkout occurs after midnight (processed in previous day). |
+| **مأمورية (Mission)** | Suppresses standard penalties; counts as worked time. |
+
+## 🔄 Data Flow & Workflow A→Z
+
+1.  **Setup**: Define Employees and Excel Templates (mapping columns like `كود` and `التاريخ_والوقت`).
+2.  **Import**: Upload raw biometric Excel file. Data is stored in `biometric_punches`.
+3.  **Adjust**: (Optional) Add missions or permissions for specific employees.
+4.  **Process**: Run "Attendance Processing". The engine scans punches, applies rules, and generates `attendance_records`.
+5.  **Report**: Export results to Excel (Detail or Summary format).
+
+## 🏗️ Architecture
+
+```ascii
++-----------------------+      +-----------------------+      +-----------------------+
+|       Frontend        |      |        Backend        |      |       Database        |
+|   (React + Vite)      | <--> |   (Express + Node)    | <--> |     (PostgreSQL)      |
+|   - RTL Layout        |      |   - Attendance Engine |      |   - Drizzle ORM       |
+|   - TanStack Query    |      |   - Excel Parser      |      |   - Schema-first      |
++-----------------------+      +-----------------------+      +-----------------------+
+```
+
+## 📁 Folder Structure
+
+- `client/` - React frontend application.
+  - `src/pages/` - Individual application screens.
+  - `src/components/` - Reusable UI components (Shadcn).
+- `server/` - Express backend.
+  - `attendance-utils.ts` - **The Core Engine**: Logic for penalty and hour calculations.
+  - `routes.ts` - API endpoints and processing controller.
+  - `storage.ts` - Database interaction layer using Drizzle.
+- `shared/` - Shared TypeScript types and Zod schemas.
+  - `schema.ts` - Database table definitions.
+
+## 🗄️ Database
+
+### Tables Overview
+- `employees`: Core staff data and shift defaults.
+- `biometric_punches`: Raw logs from the fingerprint machines.
+- `attendance_records`: The output of the processing engine.
+- `adjustments`: Missions, permissions, and half-day excuses.
+- `special_rules`: Configurable shifts and exemptions.
+
+### Migrations
+Handled via `drizzle-kit`. To sync schema:
+```bash
+npm run db:push
+```
+
+## 🔌 API Endpoints
+
+| Method | Path | Purpose |
+| :--- | :--- | :--- |
+| GET | `/api/employees` | List all staff |
+| POST | `/api/attendance/process` | Trigger the attendance engine for a date range |
+| GET | `/api/attendance` | Fetch processed records with filters |
+| POST | `/api/adjustments/import` | Bulk import missions/permissions |
+| POST | `/api/punches/import` | Upload raw biometric data |
+
+## 💻 Local Development
+
+1.  **Prerequisites**: Node.js 20+, PostgreSQL.
+2.  **Setup**:
+    ```bash
+    npm install
+    ```
+3.  **Environment Variables**:
+    Create a `.env` file or set in shell:
+    ```bash
+    DATABASE_URL=postgres://user:pass@localhost:5432/db_name
+    ```
+4.  **Run**:
+    ```bash
+    npm run dev
+    ```
+
+## 🚀 Deployment: Vercel
+
+### Recommended Approach
+Since this app uses an Express backend, the easiest way to deploy to Vercel is to use **Vercel Serverless Functions**:
+
+1.  Move `server/index.ts` logic into `api/index.ts` (Vercel's entry point).
+2.  Configure `vercel.json` to route all requests to the serverless function.
+3.  Set `DATABASE_URL` in Vercel project settings.
+
+**Note**: For heavy attendance processing (>10s), Vercel's hobby tier timeout might trigger. Consider a separate backend host (Railway/Render) for the `server/` folder if processing large datasets.
+
+## 💾 Database: Free External Options
+
+-   **Neon (Recommended)**: Serverless Postgres. Perfectly matches the Drizzle configuration.
+-   **Supabase**: Provides a full Postgres instance. Use the Connection String mode.
+-   **Aiven**: Reliable managed Postgres.
+
+**Example `DATABASE_URL`**:
+`postgres://alex:password@ep-cool-darkness-123456.us-east-2.aws.neon.tech/neondb?sslmode=require`
+
+## 📋 Migration Checklist (Replit → Vercel)
+
+- [ ] Export environment variables (`DATABASE_URL`).
+- [ ] Ensure `drizzle-kit push` is run against the new production DB.
+- [ ] Update frontend API base URL (if hosting backend separately).
+- [ ] Verify `tz` (Timezone) settings. The app defaults to Cairo (GMT+2) in `server/routes.ts`.
+- [ ] Test Excel imports with the new file size limits on the target platform.
+
+## 🛠️ Troubleshooting
+
+- **Excel date parsing**: Ensure the `History` columns in Excel are formatted as `Date/Time` or `Text` according to the template mapping.
+- **Missing Punches**: Check if the employee code in the biometric file matches the `code` field in the Employee table exactly.
+- **Workflow Error**: If the server fails to start, ensure `tsx` is available and `DATABASE_URL` is valid.
+
+## 📜 License
+Internal Enterprise License. Contact HR for details.
