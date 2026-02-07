@@ -808,53 +808,32 @@ export async function registerRoutes(
               halfDayExcused,
             });
             processedCount++;
-    auditLogEntries.push({
-      employeeCode: employee.code,
-      action: "Attendance Processed",
-      details: `Processed record for ${dateStr}: Status ${status}`,
-    });
-  } else {
-    // Absent
-     const extraNotes = extraNotesByKey.get(dateStr) || [];
-     await storage.createAttendanceRecord({
-      employeeCode: employee.code,
-      date: dateStr,
-      checkIn: null,
-      checkOut: null,
-      totalHours: 0,
-      status: "Absent",
-      penalties: [{ type: "غياب", value: 1 }],
-      overtimeHours: 0,
-      isOvernight: false,
-      notes: composeDailyNotes({
-        baseNotes: null,
-        extraNotes,
-        leaveNotes,
-        hasOvernightStay,
-      }),
-      missionStart: null,
-      missionEnd: null,
-      halfDayExcused: false,
-    });
-    processedCount++;
-    auditLogEntries.push({
-      employeeCode: employee.code,
-      action: "Attendance Processed (Absent)",
-      details: `Created absent record for ${dateStr}`,
-    });
-  }
-}
-if (auditLogEntries.length > 0) {
-  // Check if storage.createAuditLogsBulk exists, if not just skip or use single calls
-  // Based on the error, auditLogEntries was not defined, but the call was there.
-  try {
-    if (typeof (storage as any).createAuditLogsBulk === 'function') {
-      await (storage as any).createAuditLogsBulk(auditLogEntries);
-    }
-  } catch (e) {
-    console.error("Audit logging failed:", e);
-  }
-}
+          } else {
+            // Absent
+             const extraNotes = extraNotesByKey.get(dateStr) || [];
+             await storage.createAttendanceRecord({
+              employeeCode: employee.code,
+              date: dateStr,
+              checkIn: null,
+              checkOut: null,
+              totalHours: 0,
+              status: "Absent",
+              penalties: [{ type: "غياب", value: 1 }],
+              overtimeHours: 0,
+              isOvernight: false,
+              notes: composeDailyNotes({
+                baseNotes: null,
+                extraNotes,
+                leaveNotes,
+                hasOvernightStay,
+              }),
+              missionStart: null,
+              missionEnd: null,
+              halfDayExcused: false,
+            });
+            processedCount++;
+          }
+        }
       }
 
       res.json({ message: "Processing completed", processedCount });

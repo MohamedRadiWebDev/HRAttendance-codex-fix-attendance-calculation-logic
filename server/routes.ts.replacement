@@ -1,0 +1,36 @@
+            });
+            processedCount++;
+          } else {
+            // Absent
+             const extraNotes = extraNotesByKey.get(dateStr) || [];
+             await storage.createAttendanceRecord({
+              employeeCode: employee.code,
+              date: dateStr,
+              checkIn: null,
+              checkOut: null,
+              totalHours: 0,
+              status: "Absent",
+              penalties: [{ type: "غياب", value: 1 }],
+              overtimeHours: 0,
+              isOvernight: false,
+              notes: composeDailyNotes({
+                baseNotes: null,
+                extraNotes,
+                leaveNotes,
+                hasOvernightStay,
+              }),
+              missionStart: null,
+              missionEnd: null,
+              halfDayExcused: false,
+            });
+            processedCount++;
+          }
+        }
+      }
+
+      res.json({ message: "Processing completed", processedCount });
+    } catch (err: any) {
+      console.error("Processing Error:", err);
+      res.status(500).json({ message: "Failed to process attendance", error: err.message });
+    }
+  });
