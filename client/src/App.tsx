@@ -1,6 +1,17 @@
 import { Switch, Route } from "wouter";
+import { useEffect, useState } from "react";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import NotFound from "@/pages/not-found";
 import Dashboard from "@/pages/Dashboard";
 import Employees from "@/pages/Employees";
@@ -11,6 +22,8 @@ import Adjustments from "@/pages/Adjustments";
 import BulkAdjustmentsImport from "@/pages/BulkAdjustmentsImport";
 import Leaves from "@/pages/Leaves";
 import BackupRestore from "@/pages/BackupRestore";
+import { clearPersistedState, exportIncompatibleBackup, getStorageCompatibility } from "@/store/persistence";
+import { useToast } from "@/hooks/use-toast";
 
 function Router() {
   return (
@@ -30,10 +43,66 @@ function Router() {
 }
 
 function App() {
+  const { toast } = useToast();
+  const [showIncompatible, setShowIncompatible] = useState(false);
+
+  useEffect(() => {
+    const compatibility = getStorageCompatibility();
+    if (compatibility.status === "incompatible") {
+      setShowIncompatible(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent).detail as { message?: string } | undefined;
+      if (!detail?.message) return;
+      toast({ title: "تنبيه", description: detail.message, variant: "destructive" });
+    };
+    const incompatibleHandler = () => setShowIncompatible(true);
+    window.addEventListener("attendance:persistence-error", handler);
+    window.addEventListener("attendance:persistence-incompatible", incompatibleHandler);
+    return () => {
+      window.removeEventListener("attendance:persistence-error", handler);
+      window.removeEventListener("attendance:persistence-incompatible", incompatibleHandler);
+    };
+  }, [toast]);
+
+  const handleExportIncompatible = async () => {
+    const blob = await exportIncompatibleBackup();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "storage_backup.json";
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleClearStorage = async () => {
+    await clearPersistedState();
+    setShowIncompatible(false);
+    window.location.reload();
+  };
+
   return (
     <TooltipProvider>
       <Toaster />
       <Router />
+      <AlertDialog open={showIncompatible}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>البيانات المخزنة غير متوافقة</AlertDialogTitle>
+            <AlertDialogDescription>
+              تم العثور على بيانات مخزنة بإصدار غير مدعوم. يمكنك تصدير نسخة احتياطية أو مسح التخزين والمتابعة.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="gap-2 sm:gap-0">
+            <AlertDialogCancel onClick={() => setShowIncompatible(false)}>إلغاء</AlertDialogCancel>
+            <AlertDialogAction onClick={handleExportIncompatible}>تصدير نسخة احتياطية</AlertDialogAction>
+            <AlertDialogAction onClick={handleClearStorage}>مسح التخزين</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </TooltipProvider>
   );
 }

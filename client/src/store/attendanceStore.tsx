@@ -14,6 +14,12 @@ import type {
   SpecialRule,
 } from "@shared/schema";
 import { processAttendanceRecords } from "@/engine/attendanceEngine";
+import {
+  clearPersistedState,
+  deserializeAttendanceRecords,
+  loadPersistedState,
+  persistState,
+} from "@/store/persistence";
 
 const byCode = (employees: Employee[]) => new Map(employees.map((emp) => [emp.code, emp]));
 
@@ -102,10 +108,40 @@ const AttendanceStoreContext = createContext<AttendanceStoreState | null>(null);
 export const AttendanceStoreProvider = ({ children }: { children: React.ReactNode }) => {
   const [state, dispatch] = useReducer(reducer, initialState);
   const stateRef = useRef(state);
+  const persistenceTimerRef = useRef<number | null>(null);
+  const hydrationRef = useRef(false);
+  const hasHydratedRef = useRef(false);
 
   useEffect(() => {
     stateRef.current = state;
   }, [state]);
+
+  useEffect(() => {
+    if (hydrationRef.current) return;
+    hydrationRef.current = true;
+    let isMounted = true;
+    loadPersistedState()
+      .then((result) => {
+        if (!isMounted || result.status !== "ok" || !result.payload) return;
+        const payload = result.payload;
+        const hydratedState: AttendanceState = {
+          ...initialState,
+          ...payload.state,
+          punches: payload.punches,
+          attendanceRecords: deserializeAttendanceRecords(payload.state.attendanceRecords),
+        };
+        setState(hydratedState);
+      })
+      .catch(() => {
+        // ignore load errors
+      })
+      .finally(() => {
+        if (isMounted) hasHydratedRef.current = true;
+      });
+    return () => {
+      isMounted = false;
+    };
+  }, [setState]);
 
   useEffect(() => {
     if (!state.config.autoBackupEnabled) return;
@@ -150,6 +186,23 @@ export const AttendanceStoreProvider = ({ children }: { children: React.ReactNod
     } catch {
       // ignore storage errors
     }
+  }, [state]);
+
+  useEffect(() => {
+    if (!hasHydratedRef.current) return;
+    if (persistenceTimerRef.current) {
+      window.clearTimeout(persistenceTimerRef.current);
+    }
+    persistenceTimerRef.current = window.setTimeout(() => {
+      persistState(stateRef.current).catch(() => {
+        // ignore persistence errors
+      });
+    }, 400);
+    return () => {
+      if (persistenceTimerRef.current) {
+        window.clearTimeout(persistenceTimerRef.current);
+      }
+    };
   }, [state]);
 
   const setState = useCallback((nextState: AttendanceState) => {
@@ -404,6 +457,7 @@ export const AttendanceStoreProvider = ({ children }: { children: React.ReactNod
       return { message: "Processing completed", processedCount: withIds.length };
     },
     wipeData: () => {
+      void clearPersistedState();
       setState({
         employees: [],
         punches: [],
