@@ -7,6 +7,8 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { useLeaves, useCreateLeave, useDeleteLeave, useImportLeaves } from "@/hooks/use-data";
+import { useEmployees } from "@/hooks/use-employees";
+import { format, parse, isValid } from "date-fns";
 
 const TYPE_LABELS: Record<string, string> = {
   official: "اجازة رسمية",
@@ -24,11 +26,23 @@ const SCOPE_LABELS: Record<string, string> = {
 
 export default function Leaves() {
   const { data: leaves } = useLeaves();
+  const { data: employees } = useEmployees();
   const createLeave = useCreateLeave();
   const deleteLeave = useDeleteLeave();
   const importLeaves = useImportLeaves();
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [importPreview, setImportPreview] = useState<any[]>([]);
+  const [importRows, setImportRows] = useState<any[]>([]);
+  const [importHeaders, setImportHeaders] = useState<string[]>([]);
+  const [mapping, setMapping] = useState({
+    employeeCode: "",
+    date: "",
+    from: "",
+    to: "",
+    type: "",
+    notes: "",
+  });
 
   const [form, setForm] = useState({
     type: "official",
@@ -78,30 +92,134 @@ export default function Leaves() {
     XLSX.writeFile(workbook, "leaves.xlsx");
   };
 
-  const handleImport = async (file: File) => {
+  const normalizeHeader = (value: string) => value.trim().toLowerCase().replace(/\s+/g, "");
+  const guessHeader = (headers: string[], candidates: string[]) => {
+    const normalized = headers.map((header) => ({ header, key: normalizeHeader(header) }));
+    const found = normalized.find((item) => candidates.includes(item.key));
+    return found?.header || "";
+  };
+
+  const parseDateValue = (value: any) => {
+    if (!value) return null;
+    if (value instanceof Date && isValid(value)) {
+      return format(value, "yyyy-MM-dd");
+    }
+    if (typeof value === "number" && Number.isFinite(value)) {
+      const excelEpoch = new Date(Date.UTC(1899, 11, 30));
+      const parsed = new Date(excelEpoch.getTime() + value * 24 * 60 * 60 * 1000);
+      return isValid(parsed) ? format(parsed, "yyyy-MM-dd") : null;
+    }
+    if (typeof value === "string") {
+      const trimmed = value.trim();
+      const direct = parse(trimmed, "yyyy-MM-dd", new Date());
+      if (isValid(direct)) return format(direct, "yyyy-MM-dd");
+      const alt = parse(trimmed, "dd/MM/yyyy", new Date());
+      if (isValid(alt)) return format(alt, "yyyy-MM-dd");
+      const fallback = new Date(trimmed);
+      return isValid(fallback) ? format(fallback, "yyyy-MM-dd") : null;
+    }
+    return null;
+  };
+
+  const normalizeLeaveType = (value: string) => {
+    const trimmed = value.trim();
+    if (trimmed === "official" || trimmed === "اجازة رسمية") return "official";
+    if (trimmed === "collections" || trimmed === "اجازات التحصيل") return "collections";
+    return "";
+  };
+
+  const hasOverlap = (start: string, end: string, otherStart: string, otherEnd: string) => {
+    return !(end < otherStart || start > otherEnd);
+  };
+
+  const handleFilePreview = async (file: File) => {
     const buffer = await file.arrayBuffer();
-    const workbook = XLSX.read(buffer);
+    const workbook = XLSX.read(buffer, { cellDates: true });
     const sheet = workbook.Sheets[workbook.SheetNames[0]];
     const data = XLSX.utils.sheet_to_json(sheet, { defval: "" }) as any[];
-    const rowsToImport = data.map((row, index) => ({
-      rowIndex: index + 2,
-      type: String(row["النوع"] || "").trim(),
-      scope: String(row["النطاق"] || "").trim(),
-      scopeValue: String(row["القيمة"] || "").trim(),
-      startDate: String(row["من"] || "").trim(),
-      endDate: String(row["إلى"] || "").trim(),
-      note: String(row["ملاحظة"] || "").trim(),
-    }));
-    const result = await importLeaves.mutateAsync({ rows: rowsToImport });
-    if (result.invalid.length > 0) {
+    if (data.length === 0) {
+      toast({ title: "تنبيه", description: "الملف فارغ", variant: "destructive" });
+      return;
+    }
+    const headers = Object.keys(data[0]);
+    setImportHeaders(headers);
+    setImportRows(data);
+    setImportPreview(data.slice(0, 10));
+    setMapping({
+      employeeCode: guessHeader(headers, ["الكود", "كود", "employeecode", "code", "id", "employeeid"]),
+      date: guessHeader(headers, ["التاريخ", "date", "day"]),
+      from: guessHeader(headers, ["من", "from", "start"]),
+      to: guessHeader(headers, ["الى", "إلى", "to", "end"]),
+      type: guessHeader(headers, ["النوع", "type"]),
+      notes: guessHeader(headers, ["ملاحظات", "ملاحظة", "notes", "note"]),
+    });
+  };
+
+  const handleImport = async () => {
+    if (!mapping.employeeCode || !mapping.date || !mapping.type) {
+      toast({ title: "خطأ", description: "يرجى تحديد الأعمدة الأساسية (الكود، التاريخ، النوع).", variant: "destructive" });
+      return;
+    }
+    const employeeMap = new Map((employees || []).map((emp) => [String(emp.code), emp]));
+    const invalid: { rowIndex: number; reason: string }[] = [];
+    const rowsToImport = importRows.map((row, index) => {
+      const employeeCode = String(row[mapping.employeeCode] || "").trim();
+      const dateValue = parseDateValue(row[mapping.date]);
+      const fromValue = mapping.from ? parseDateValue(row[mapping.from]) : null;
+      const toValue = mapping.to ? parseDateValue(row[mapping.to]) : null;
+      const typeValue = normalizeLeaveType(String(row[mapping.type] || ""));
+      const notesValue = mapping.notes ? String(row[mapping.notes] || "").trim() : "";
+
+      if (!employeeCode || !employeeMap.has(employeeCode)) {
+        invalid.push({ rowIndex: index + 2, reason: "كود الموظف غير معروف" });
+        return null;
+      }
+      const startDate = fromValue || dateValue;
+      const endDate = toValue || dateValue;
+      if (!startDate || !endDate) {
+        invalid.push({ rowIndex: index + 2, reason: "تاريخ غير صالح" });
+        return null;
+      }
+      if (!typeValue) {
+        invalid.push({ rowIndex: index + 2, reason: "نوع الإجازة غير صالح" });
+        return null;
+      }
+
+      const existingLeaves = rows.filter((leave: any) => leave.scope === "emp" && leave.scopeValue === employeeCode);
+      const overlap = existingLeaves.some((leave: any) => hasOverlap(startDate, endDate, leave.startDate, leave.endDate));
+      if (overlap) {
+        invalid.push({ rowIndex: index + 2, reason: "تداخل مع إجازة موجودة" });
+        return null;
+      }
+
+      return {
+        type: typeValue,
+        scope: "emp",
+        scopeValue: employeeCode,
+        startDate,
+        endDate,
+        note: notesValue || null,
+      };
+    }).filter(Boolean);
+
+    if (rowsToImport.length === 0) {
+      toast({ title: "خطأ", description: "لا توجد صفوف صالحة للاستيراد.", variant: "destructive" });
+      return;
+    }
+
+    await importLeaves.mutateAsync({ rows: rowsToImport as any });
+    if (invalid.length > 0) {
       toast({
-        title: "تحذير",
-        description: `تم استيراد ${result.inserted} صفوف، مع ${result.invalid.length} صفوف غير صالحة.`,
+        title: "تم الاستيراد مع تحذيرات",
+        description: `تم استيراد ${rowsToImport.length} صفوف، مع ${invalid.length} صفوف غير صالحة.`,
         variant: "destructive",
       });
     } else {
       toast({ title: "نجاح", description: "تم استيراد الإجازات" });
     }
+    setImportPreview([]);
+    setImportRows([]);
+    setImportHeaders([]);
   };
 
   return (
@@ -167,7 +285,7 @@ export default function Leaves() {
                 onChange={(e) => {
                   const file = e.target.files?.[0];
                   if (file) {
-                    handleImport(file);
+                    handleFilePreview(file);
                   }
                   if (fileInputRef.current) fileInputRef.current.value = "";
                 }}
@@ -177,6 +295,98 @@ export default function Leaves() {
               </Button>
             </div>
           </div>
+
+          {importPreview.length > 0 && (
+            <div className="bg-white rounded-2xl border border-border/50 shadow-sm p-6 space-y-4">
+              <h3 className="text-lg font-bold">تعيين أعمدة ملف الإجازات</h3>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <Select value={mapping.employeeCode} onValueChange={(value) => setMapping((prev) => ({ ...prev, employeeCode: value }))}>
+                  <SelectTrigger><SelectValue placeholder="عمود الكود" /></SelectTrigger>
+                  <SelectContent>
+                    {importHeaders.map((header) => (
+                      <SelectItem key={header} value={header}>{header}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select value={mapping.date} onValueChange={(value) => setMapping((prev) => ({ ...prev, date: value }))}>
+                  <SelectTrigger><SelectValue placeholder="عمود التاريخ" /></SelectTrigger>
+                  <SelectContent>
+                    {importHeaders.map((header) => (
+                      <SelectItem key={header} value={header}>{header}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select value={mapping.type} onValueChange={(value) => setMapping((prev) => ({ ...prev, type: value }))}>
+                  <SelectTrigger><SelectValue placeholder="عمود النوع" /></SelectTrigger>
+                  <SelectContent>
+                    {importHeaders.map((header) => (
+                      <SelectItem key={header} value={header}>{header}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select value={mapping.from} onValueChange={(value) => setMapping((prev) => ({ ...prev, from: value }))}>
+                  <SelectTrigger><SelectValue placeholder="عمود من (اختياري)" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="">بدون</SelectItem>
+                    {importHeaders.map((header) => (
+                      <SelectItem key={header} value={header}>{header}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select value={mapping.to} onValueChange={(value) => setMapping((prev) => ({ ...prev, to: value }))}>
+                  <SelectTrigger><SelectValue placeholder="عمود إلى (اختياري)" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="">بدون</SelectItem>
+                    {importHeaders.map((header) => (
+                      <SelectItem key={header} value={header}>{header}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select value={mapping.notes} onValueChange={(value) => setMapping((prev) => ({ ...prev, notes: value }))}>
+                  <SelectTrigger><SelectValue placeholder="عمود الملاحظات (اختياري)" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="">بدون</SelectItem>
+                    {importHeaders.map((header) => (
+                      <SelectItem key={header} value={header}>{header}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="overflow-x-auto border rounded-lg">
+                <table className="w-full text-sm text-right">
+                  <thead className="bg-slate-50 text-muted-foreground">
+                    <tr>
+                      {importHeaders.map((header) => (
+                        <th key={header} className="px-3 py-2">{header}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {importPreview.map((row, idx) => (
+                      <tr key={idx} className="border-t">
+                        {importHeaders.map((header) => (
+                          <td key={header} className="px-3 py-2">{String(row[header] ?? "")}</td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="flex gap-2">
+                <Button onClick={handleImport}>استيراد الإجازات</Button>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setImportPreview([]);
+                    setImportRows([]);
+                    setImportHeaders([]);
+                  }}
+                >
+                  إلغاء
+                </Button>
+              </div>
+            </div>
+          )}
 
           <div className="bg-white rounded-2xl border border-border/50 shadow-sm overflow-hidden">
             <table className="w-full text-sm text-right">
