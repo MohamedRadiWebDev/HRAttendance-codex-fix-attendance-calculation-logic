@@ -1,204 +1,140 @@
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { api, buildUrl } from "@shared/routes";
-import { type InsertSpecialRule, type InsertAdjustment, type InsertTemplate, type InsertLeave } from "@shared/schema";
+import { useCallback, useState } from "react";
+import type { InsertAdjustment, InsertLeave, InsertOfficialHoliday, InsertSpecialRule, InsertTemplate } from "@shared/schema";
+import { useAttendanceStore, type AttendanceStoreState } from "@/store/attendanceStore";
+
+const useStoreMutation = <TInput, TResult>(
+  action: (input: TInput) => TResult
+) => {
+  const [isPending, setIsPending] = useState(false);
+
+  const mutate = useCallback(
+    (input: TInput, options?: { onSuccess?: (data: TResult) => void; onError?: (error: any) => void }) => {
+      setIsPending(true);
+      try {
+        const result = action(input);
+        options?.onSuccess?.(result);
+      } catch (error) {
+        options?.onError?.(error);
+      } finally {
+        setIsPending(false);
+      }
+    },
+    [action]
+  );
+
+  const mutateAsync = useCallback(
+    async (input: TInput) => {
+      setIsPending(true);
+      try {
+        return action(input);
+      } finally {
+        setIsPending(false);
+      }
+    },
+    [action]
+  );
+
+  return { mutate, mutateAsync, isPending };
+};
 
 export function useRules() {
-  return useQuery({
-    queryKey: [api.rules.list.path],
-    queryFn: async () => {
-      const res = await fetch(api.rules.list.path);
-      if (!res.ok) throw new Error("Failed to fetch rules");
-      return api.rules.list.responses[200].parse(await res.json());
-    },
-  });
+  const rules = useAttendanceStore((state: AttendanceStoreState) => state.rules);
+  return { data: rules, isLoading: false };
 }
 
 export function useCreateRule() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: async (data: InsertSpecialRule) => {
-      const res = await fetch(api.rules.create.path, {
-        method: api.rules.create.method,
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
-      });
-      if (!res.ok) throw new Error("Failed to create rule");
-      return api.rules.create.responses[201].parse(await res.json());
-    },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: [api.rules.list.path] }),
-  });
+  const createRule = useAttendanceStore((state: AttendanceStoreState) => state.createRule);
+  return useStoreMutation<InsertSpecialRule, any>(createRule);
 }
 
 export function useDeleteRule() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: async (id: number) => {
-      const url = buildUrl(api.rules.delete.path, { id });
-      const res = await fetch(url, { method: api.rules.delete.method });
-      if (!res.ok) throw new Error("Failed to delete rule");
-    },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: [api.rules.list.path] }),
-  });
+  const deleteRule = useAttendanceStore((state: AttendanceStoreState) => state.deleteRule);
+  return useStoreMutation<number, void>(deleteRule);
 }
 
 export function useUpdateRule() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: async ({ id, rule }: { id: number; rule: Partial<InsertSpecialRule> }) => {
-      const url = buildUrl(api.rules.update.path, { id });
-      const res = await fetch(url, {
-        method: api.rules.update.method,
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(rule),
-      });
-      if (!res.ok) throw new Error("Failed to update rule");
-      return api.rules.update.responses[200].parse(await res.json());
-    },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: [api.rules.list.path] }),
+  const updateRule = useAttendanceStore((state: AttendanceStoreState) => state.updateRule);
+  return useStoreMutation<{ id: number; rule: Partial<InsertSpecialRule> }, any>(({ id, rule }) => {
+    return updateRule(id, rule);
   });
+}
+
+export function useImportRules() {
+  const importRules = useAttendanceStore((state: AttendanceStoreState) => state.importRules);
+  return useStoreMutation<InsertSpecialRule[], { count: number }>(importRules);
 }
 
 export function useAdjustments(filters?: { startDate?: string; endDate?: string; employeeCode?: string; type?: string }) {
-  return useQuery({
-    queryKey: [api.adjustments.list.path, filters],
-    queryFn: async () => {
-      const queryParams = new URLSearchParams();
-      if (filters?.startDate) queryParams.append("startDate", filters.startDate);
-      if (filters?.endDate) queryParams.append("endDate", filters.endDate);
-      if (filters?.employeeCode) queryParams.append("employeeCode", filters.employeeCode);
-      if (filters?.type) queryParams.append("type", filters.type);
-      const url = queryParams.toString()
-        ? `${api.adjustments.list.path}?${queryParams.toString()}`
-        : api.adjustments.list.path;
-      const res = await fetch(url);
-      if (!res.ok) throw new Error("Failed to fetch adjustments");
-      return api.adjustments.list.responses[200].parse(await res.json());
-    },
+  const adjustments = useAttendanceStore((state: AttendanceStoreState) => state.adjustments);
+  const filtered = adjustments.filter((adj) => {
+    if (filters?.startDate && adj.date < filters.startDate) return false;
+    if (filters?.endDate && adj.date > filters.endDate) return false;
+    if (filters?.employeeCode && adj.employeeCode !== filters.employeeCode) return false;
+    if (filters?.type && adj.type !== filters.type) return false;
+    return true;
   });
+  return { data: filtered, isLoading: false };
 }
 
 export function useCreateAdjustment() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: async (data: InsertAdjustment) => {
-      const res = await fetch(api.adjustments.create.path, {
-        method: api.adjustments.create.method,
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
-      });
-      if (!res.ok) throw new Error("Failed to create adjustment");
-      return api.adjustments.create.responses[201].parse(await res.json());
-    },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: [api.adjustments.list.path] }),
-  });
+  const createAdjustment = useAttendanceStore((state: AttendanceStoreState) => state.createAdjustment);
+  return useStoreMutation<InsertAdjustment, any>(createAdjustment);
 }
 
 export function useImportAdjustments() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: async (data: { sourceFileName?: string; rows: InsertAdjustment[] }) => {
-      const res = await fetch(api.adjustments.import.path, {
-        method: api.adjustments.import.method,
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
-      });
-      if (!res.ok) throw new Error("Failed to import adjustments");
-      return api.adjustments.import.responses[200].parse(await res.json());
-    },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: [api.adjustments.list.path] }),
-  });
+  const importAdjustments = useAttendanceStore((state: AttendanceStoreState) => state.importAdjustments);
+  return useStoreMutation<{ sourceFileName?: string; rows: InsertAdjustment[] }, { inserted: number; invalid: { rowIndex?: number; reason?: string }[] }>(
+    ({ rows }) => importAdjustments(rows)
+  );
 }
 
 export function useTemplates() {
-  return useQuery({
-    queryKey: [api.templates.list.path],
-    queryFn: async () => {
-      const res = await fetch(api.templates.list.path);
-      if (!res.ok) throw new Error("Failed to fetch templates");
-      return api.templates.list.responses[200].parse(await res.json());
-    },
-  });
+  return { data: [], isLoading: false };
 }
 
 export function useCreateTemplate() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: async (data: InsertTemplate) => {
-      const res = await fetch(api.templates.create.path, {
-        method: api.templates.create.method,
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
-      });
-      if (!res.ok) throw new Error("Failed to create template");
-      return api.templates.create.responses[201].parse(await res.json());
-    },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: [api.templates.list.path] }),
+  return useStoreMutation<InsertTemplate, any>(() => {
+    throw new Error("Templates are not available in frontend-only mode");
   });
 }
 
 export function useDeleteTemplate() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: async (id: number) => {
-      const url = buildUrl(api.templates.delete.path, { id });
-      const res = await fetch(url, { method: api.templates.delete.method });
-      if (!res.ok) throw new Error("Failed to delete template");
-    },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: [api.templates.list.path] }),
+  return useStoreMutation<number, void>(() => {
+    throw new Error("Templates are not available in frontend-only mode");
   });
 }
 
 export function useLeaves() {
-  return useQuery({
-    queryKey: [api.leaves.list.path],
-    queryFn: async () => {
-      const res = await fetch(api.leaves.list.path);
-      if (!res.ok) throw new Error("Failed to fetch leaves");
-      return api.leaves.list.responses[200].parse(await res.json());
-    },
-  });
+  const leaves = useAttendanceStore((state: AttendanceStoreState) => state.leaves);
+  return { data: leaves, isLoading: false };
+}
+
+export function useOfficialHolidays() {
+  const officialHolidays = useAttendanceStore((state: AttendanceStoreState) => state.officialHolidays);
+  return { data: officialHolidays, isLoading: false };
+}
+
+export function useCreateOfficialHoliday() {
+  const createOfficialHoliday = useAttendanceStore((state: AttendanceStoreState) => state.createOfficialHoliday);
+  return useStoreMutation<InsertOfficialHoliday, any>(createOfficialHoliday);
+}
+
+export function useDeleteOfficialHoliday() {
+  const deleteOfficialHoliday = useAttendanceStore((state: AttendanceStoreState) => state.deleteOfficialHoliday);
+  return useStoreMutation<number, void>(deleteOfficialHoliday);
 }
 
 export function useCreateLeave() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: async (data: InsertLeave) => {
-      const res = await fetch(api.leaves.create.path, {
-        method: api.leaves.create.method,
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
-      });
-      if (!res.ok) throw new Error("Failed to create leave");
-      return api.leaves.create.responses[201].parse(await res.json());
-    },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: [api.leaves.list.path] }),
-  });
+  const createLeave = useAttendanceStore((state: AttendanceStoreState) => state.createLeave);
+  return useStoreMutation<InsertLeave, any>(createLeave);
 }
 
 export function useDeleteLeave() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: async (id: number) => {
-      const url = buildUrl(api.leaves.delete.path, { id });
-      const res = await fetch(url, { method: api.leaves.delete.method });
-      if (!res.ok) throw new Error("Failed to delete leave");
-    },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: [api.leaves.list.path] }),
-  });
+  const deleteLeave = useAttendanceStore((state: AttendanceStoreState) => state.deleteLeave);
+  return useStoreMutation<number, void>(deleteLeave);
 }
 
 export function useImportLeaves() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: async (data: { rows: InsertLeave[] }) => {
-      const res = await fetch(api.leaves.import.path, {
-        method: api.leaves.import.method,
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
-      });
-      if (!res.ok) throw new Error("Failed to import leaves");
-      return api.leaves.import.responses[200].parse(await res.json());
-    },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: [api.leaves.list.path] }),
-  });
+  const importLeaves = useAttendanceStore((state: AttendanceStoreState) => state.importLeaves);
+  return useStoreMutation<{ rows: InsertLeave[] }, { inserted: number; invalid: { rowIndex?: number; reason?: string }[] }>(({ rows }) => importLeaves(rows));
 }
