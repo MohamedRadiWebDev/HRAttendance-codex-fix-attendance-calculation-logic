@@ -17,6 +17,8 @@ import { format, parse } from "date-fns";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { buildEmpScope, parseRuleScope } from "@shared/rule-scope";
 import { insertRuleSchema, RULE_TYPES, type SpecialRule } from "@shared/schema";
+import * as XLSX from "xlsx";
+import { useAttendanceStore } from "@/store/attendanceStore";
 
 export default function Rules() {
   const { data: rules, isLoading } = useRules();
@@ -24,6 +26,9 @@ export default function Rules() {
   const importRules = useImportRules();
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const setRules = useAttendanceStore((state) => state.setRules);
+  const currentRules = useAttendanceStore((state) => state.rules);
+  const [importMode, setImportMode] = useState<"replace" | "merge">("replace");
 
   const handleDelete = async (id: number) => {
     if (!confirm("هل أنت متأكد من حذف هذه القاعدة؟")) return;
@@ -37,32 +42,116 @@ export default function Rules() {
 
   const handleExport = () => {
     if (!rules) return;
-    const blob = new Blob([JSON.stringify(rules, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `attendance_rules_${format(new Date(), "yyyyMMdd")}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
+    const worksheet = XLSX.utils.json_to_sheet(
+      rules.map((rule) => ({
+        id: rule.id,
+        name: rule.name,
+        priority: rule.priority ?? 0,
+        scope: rule.scope,
+        startDate: rule.startDate,
+        endDate: rule.endDate,
+        ruleType: rule.ruleType,
+        shiftStart: (rule.ruleType === "custom_shift" && (rule.params as any)?.shiftStart) || "",
+        shiftEnd: (rule.ruleType === "custom_shift" && (rule.params as any)?.shiftEnd) || "",
+        notes: typeof (rule.params as any)?.notes === "string" ? (rule.params as any)?.notes : "",
+      }))
+    );
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Rules");
+    XLSX.writeFile(workbook, `rules_${format(new Date(), "yyyyMMdd")}.xlsx`);
   };
 
   const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const reader = new FileReader();
-    reader.onload = async (event) => {
-      try {
-        const content = JSON.parse(event.target?.result as string);
-        // Clean IDs before importing
-        const rulesToImport = content.map(({ id, ...rest }: any) => rest);
-        await importRules.mutateAsync(rulesToImport);
-        toast({ title: "نجاح", description: "تم استيراد القواعد بنجاح" });
-      } catch (err: any) {
-        toast({ title: "خطأ", description: "فشل استيراد القواعد. تأكد من صحة الملف.", variant: "destructive" });
+    try {
+      const buffer = await file.arrayBuffer();
+      const workbook = XLSX.read(buffer, { cellDates: true });
+      const sheet = workbook.Sheets[workbook.SheetNames[0]];
+      const data = XLSX.utils.sheet_to_json(sheet, { defval: "" }) as any[];
+      if (data.length === 0) {
+        toast({ title: "تنبيه", description: "الملف فارغ", variant: "destructive" });
+        return;
       }
-    };
-    reader.readAsText(file);
+
+      const invalid: string[] = [];
+      const rows = data.map((row, index) => {
+        const idValue = row["id"] ? Number(row["id"]) : null;
+        const name = String(row["name"] || "").trim();
+        const priority = Number(row["priority"] ?? 0);
+        const scope = String(row["scope"] || "").trim() || "all";
+        const startDate = String(row["startDate"] || "").trim();
+        const endDate = String(row["endDate"] || "").trim();
+        const ruleType = String(row["ruleType"] || "").trim();
+        const shiftStart = String(row["shiftStart"] || "").trim();
+        const shiftEnd = String(row["shiftEnd"] || "").trim();
+        const notes = String(row["notes"] || "").trim();
+
+        if (!name) invalid.push(`صف ${index + 2}: اسم القاعدة مطلوب`);
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate)) invalid.push(`صف ${index + 2}: تاريخ البداية غير صالح`);
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(endDate)) invalid.push(`صف ${index + 2}: تاريخ النهاية غير صالح`);
+        if (!RULE_TYPES.includes(ruleType as any)) invalid.push(`صف ${index + 2}: نوع القاعدة غير مدعوم`);
+        const parsedScope = parseRuleScope(scope);
+        if (parsedScope.type === "emp" && parsedScope.values.length === 0) {
+          invalid.push(`صف ${index + 2}: نطاق الموظفين غير صالح`);
+        }
+        if ((scope.startsWith("dept:") || scope.startsWith("sector:")) && scope.split(":")[1]?.trim() === "") {
+          invalid.push(`صف ${index + 2}: نطاق القسم/القطاع غير صالح`);
+        }
+        if (shiftStart && !/^\d{2}:\d{2}$/.test(shiftStart)) {
+          invalid.push(`صف ${index + 2}: بداية الوردية غير صالحة`);
+        }
+        if (shiftEnd && !/^\d{2}:\d{2}$/.test(shiftEnd)) {
+          invalid.push(`صف ${index + 2}: نهاية الوردية غير صالحة`);
+        }
+
+        return {
+          id: Number.isFinite(idValue) ? idValue : undefined,
+          name,
+          priority: Number.isFinite(priority) ? priority : 0,
+          scope,
+          startDate,
+          endDate,
+          ruleType,
+          params: {
+            shiftStart: shiftStart || undefined,
+            shiftEnd: shiftEnd || undefined,
+            notes: notes || undefined,
+          },
+        } as SpecialRule;
+      });
+
+      if (invalid.length > 0) {
+        toast({ title: "خطأ", description: invalid.slice(0, 3).join(" | "), variant: "destructive" });
+        return;
+      }
+
+      const currentMaxId = currentRules.reduce((max, rule) => Math.max(max, rule.id || 0), 0);
+      let nextId = currentMaxId + 1;
+      const normalizedRows = rows.map((row) => ({
+        ...row,
+        id: row.id ?? nextId++,
+      }));
+
+      if (importMode === "replace") {
+        setRules(normalizedRows);
+      } else {
+        const map = new Map(currentRules.map((rule) => [rule.id, rule]));
+        normalizedRows.forEach((row) => {
+          if (row.id != null && map.has(row.id)) {
+            map.set(row.id, row);
+          } else {
+            map.set(row.id, row);
+          }
+        });
+        setRules(Array.from(map.values()));
+      }
+
+      toast({ title: "نجاح", description: "تم استيراد القواعد بنجاح" });
+    } catch (err: any) {
+      toast({ title: "خطأ", description: "فشل استيراد القواعد. تأكد من صحة الملف.", variant: "destructive" });
+    }
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
@@ -76,11 +165,20 @@ export default function Rules() {
             <div className="flex justify-between items-center">
               <h2 className="text-2xl font-bold font-display">إدارة القواعد الخاصة</h2>
               <div className="flex gap-2">
-                <input type="file" ref={fileInputRef} onChange={handleImport} className="hidden" accept=".json" />
+                <input type="file" ref={fileInputRef} onChange={handleImport} className="hidden" accept=".xlsx,.xls" />
                 <Button variant="outline" onClick={() => fileInputRef.current?.click()} className="gap-2">
                   <Upload className="w-4 h-4" />
                   استيراد
                 </Button>
+                <Select value={importMode} onValueChange={(value) => setImportMode(value as "replace" | "merge")}>
+                  <SelectTrigger className="w-40">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="replace">استبدال</SelectItem>
+                    <SelectItem value="merge">دمج</SelectItem>
+                  </SelectContent>
+                </Select>
                 <Button variant="outline" onClick={handleExport} className="gap-2">
                   <Download className="w-4 h-4" />
                   تصدير

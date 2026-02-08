@@ -214,7 +214,7 @@ const parseEmployeeScope = (scope: string, employee: Employee, normalizedEmploye
   if (scope.startsWith("sector:")) return employee.sector === scope.replace("sector:", "");
   if (scope.startsWith("emp:")) {
     const parsedScope = parseRuleScope(scope);
-    return parsedScope.type === "emp" && parsedScope.values.includes(normalizedEmployeeCode);
+    return parsedScope.type === "emp" && parsedScope.values.some((value) => value === normalizedEmployeeCode);
   }
   return false;
 };

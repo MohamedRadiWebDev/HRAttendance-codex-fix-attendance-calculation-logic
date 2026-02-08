@@ -10,6 +10,7 @@ import Rules from "@/pages/Rules";
 import Adjustments from "@/pages/Adjustments";
 import BulkAdjustmentsImport from "@/pages/BulkAdjustmentsImport";
 import Leaves from "@/pages/Leaves";
+import BackupRestore from "@/pages/BackupRestore";
 
 function Router() {
   return (
@@ -22,6 +23,7 @@ function Router() {
       <Route path="/adjustments" component={Adjustments} />
       <Route path="/bulk-adjustments" component={BulkAdjustmentsImport} />
       <Route path="/leaves" component={Leaves} />
+      <Route path="/backup" component={BackupRestore} />
       <Route component={NotFound} />
     </Switch>
   );

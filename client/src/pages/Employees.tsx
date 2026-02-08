@@ -1,25 +1,25 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Sidebar } from "@/components/Sidebar";
 import { Header } from "@/components/Header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Plus, Search, Filter, MoreHorizontal, FileDown } from "lucide-react";
-import { useEmployees, useCreateEmployee } from "@/hooks/use-employees";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { useForm } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
-import { insertEmployeeSchema } from "@shared/schema";
-import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
+import { Search, Filter, MoreHorizontal, FileDown } from "lucide-react";
+import { useEmployees } from "@/hooks/use-employees";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import * as XLSX from 'xlsx';
+import type { Employee } from "@shared/schema";
 
 export default function Employees() {
   const { data: employees, isLoading } = useEmployees();
   const [searchTerm, setSearchTerm] = useState("");
   const { toast } = useToast();
+  const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
   
-  const filteredEmployees = employees?.filter(emp => 
-    emp.nameAr.includes(searchTerm) || emp.code.includes(searchTerm)
+  const filteredEmployees = useMemo(
+    () =>
+      employees?.filter((emp) => emp.nameAr.includes(searchTerm) || emp.code.includes(searchTerm)) ?? [],
+    [employees, searchTerm]
   );
 
   const handleExport = () => {
@@ -60,7 +60,6 @@ export default function Employees() {
                   <FileDown className="w-4 h-4" />
                   تصدير
                 </Button>
-                <AddEmployeeDialog />
               </div>
             </div>
 
@@ -81,11 +80,15 @@ export default function Employees() {
                 <tbody className="divide-y divide-border/50">
                   {isLoading ? (
                     <tr><td colSpan={8} className="px-6 py-8 text-center text-muted-foreground">جاري التحميل...</td></tr>
-                  ) : filteredEmployees?.length === 0 ? (
+                  ) : filteredEmployees.length === 0 ? (
                     <tr><td colSpan={8} className="px-6 py-8 text-center text-muted-foreground">لا يوجد موظفين</td></tr>
                   ) : (
-                    filteredEmployees?.map((employee) => (
-                      <tr key={employee.id} className="hover:bg-slate-50/50 transition-colors">
+                    filteredEmployees.map((employee) => (
+                      <tr
+                        key={employee.id}
+                        className="hover:bg-slate-50/50 transition-colors cursor-pointer"
+                        onClick={() => setSelectedEmployee(employee)}
+                      >
                         <td className="px-6 py-4 font-mono text-primary">{employee.code}</td>
                         <td className="px-6 py-4 font-medium">{employee.nameAr}</td>
                         <td className="px-6 py-4">
@@ -98,7 +101,7 @@ export default function Employees() {
                         <td className="px-6 py-4 text-muted-foreground">{employee.hireDate || "-"}</td>
                         <td className="px-6 py-4" dir="ltr">{employee.personalPhone || "-"}</td>
                         <td className="px-6 py-4">
-                          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => toast({ title: "معلومات", description: `عرض تفاصيل الموظف: ${employee.nameAr}` })}>
+                          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setSelectedEmployee(employee)}>
                             <MoreHorizontal className="w-4 h-4" />
                           </Button>
                         </td>
@@ -109,112 +112,40 @@ export default function Employees() {
               </table>
             </div>
           </div>
+          <Dialog open={Boolean(selectedEmployee)} onOpenChange={(open) => !open && setSelectedEmployee(null)}>
+            <DialogContent className="sm:max-w-[600px]" dir="rtl">
+              <DialogHeader>
+                <DialogTitle>تفاصيل الموظف</DialogTitle>
+              </DialogHeader>
+              {selectedEmployee && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                  <div><span className="font-semibold">الكود:</span> {selectedEmployee.code}</div>
+                  <div><span className="font-semibold">الاسم:</span> {selectedEmployee.nameAr}</div>
+                  <div><span className="font-semibold">القطاع:</span> {selectedEmployee.sector || "-"}</div>
+                  <div><span className="font-semibold">الإدارة:</span> {selectedEmployee.department || "-"}</div>
+                  <div><span className="font-semibold">القسم:</span> {selectedEmployee.section || "-"}</div>
+                  <div><span className="font-semibold">الوظيفة:</span> {selectedEmployee.jobTitle || "-"}</div>
+                  <div><span className="font-semibold">الفرع:</span> {selectedEmployee.branch || "-"}</div>
+                  <div><span className="font-semibold">المحافظة:</span> {selectedEmployee.governorate || "-"}</div>
+                  <div><span className="font-semibold">تاريخ التعيين:</span> {selectedEmployee.hireDate || "-"}</div>
+                  <div><span className="font-semibold">تاريخ ترك العمل:</span> {selectedEmployee.terminationDate || "-"}</div>
+                  <div><span className="font-semibold">سبب ترك العمل:</span> {selectedEmployee.terminationReason || "-"}</div>
+                  <div><span className="font-semibold">مدة الخدمة:</span> {selectedEmployee.serviceDuration || "-"}</div>
+                  <div><span className="font-semibold">المدير المباشر:</span> {selectedEmployee.directManager || "-"}</div>
+                  <div><span className="font-semibold">مدير الإدارة:</span> {selectedEmployee.deptManager || "-"}</div>
+                  <div><span className="font-semibold">الرقم القومي:</span> {selectedEmployee.nationalId || "-"}</div>
+                  <div><span className="font-semibold">تاريخ الميلاد:</span> {selectedEmployee.birthDate || "-"}</div>
+                  <div><span className="font-semibold">العنوان:</span> {selectedEmployee.address || "-"}</div>
+                  <div><span className="font-semibold">محل الميلاد:</span> {selectedEmployee.birthPlace || "-"}</div>
+                  <div><span className="font-semibold">التليفون الشخصي:</span> {selectedEmployee.personalPhone || "-"}</div>
+                  <div><span className="font-semibold">تليفون الطوارئ:</span> {selectedEmployee.emergencyPhone || "-"}</div>
+                  <div><span className="font-semibold">بداية الوردية:</span> {selectedEmployee.shiftStart || "-"}</div>
+                </div>
+              )}
+            </DialogContent>
+          </Dialog>
         </main>
       </div>
     </div>
-  );
-}
-
-function AddEmployeeDialog() {
-  const [open, setOpen] = useState(false);
-  const { toast } = useToast();
-  const createEmployee = useCreateEmployee();
-  
-  const form = useForm({
-    resolver: zodResolver(insertEmployeeSchema),
-    defaultValues: {
-      code: "",
-      nameAr: "",
-      department: "",
-      shiftStart: "09:00",
-    }
-  });
-
-  const onSubmit = (data: any) => {
-    createEmployee.mutate(data, {
-      onSuccess: () => {
-        toast({ title: "تمت العملية بنجاح", description: "تم إضافة الموظف الجديد" });
-        setOpen(false);
-        form.reset();
-      },
-      onError: (err) => {
-        toast({ title: "خطأ", description: err.message, variant: "destructive" });
-      }
-    });
-  };
-
-  return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        <Button className="gap-2 bg-primary hover:bg-primary/90 shadow-lg shadow-primary/25">
-          <Plus className="w-4 h-4" />
-          إضافة موظف
-        </Button>
-      </DialogTrigger>
-      <DialogContent className="sm:max-w-[425px]">
-        <DialogHeader>
-          <DialogTitle>إضافة موظف جديد</DialogTitle>
-        </DialogHeader>
-        <Form {...form}>
-          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4 pt-4">
-            <FormField
-              control={form.control}
-              name="code"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>كود الموظف</FormLabel>
-                  <FormControl>
-                    <Input placeholder="مثال: 1001" {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <FormField
-              control={form.control}
-              name="nameAr"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>الاسم (عربي)</FormLabel>
-                  <FormControl>
-                    <Input placeholder="الاسم الكامل" {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <FormField
-              control={form.control}
-              name="department"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>القسم</FormLabel>
-                  <FormControl>
-                    <Input placeholder="مثال: المبيعات" {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <FormField
-              control={form.control}
-              name="shiftStart"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>بداية الوردية</FormLabel>
-                  <FormControl>
-                    <Input type="time" {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <Button type="submit" className="w-full mt-4" disabled={createEmployee.isPending}>
-              {createEmployee.isPending ? "جاري الحفظ..." : "حفظ"}
-            </Button>
-          </form>
-        </Form>
-      </DialogContent>
-    </Dialog>
   );
 }
