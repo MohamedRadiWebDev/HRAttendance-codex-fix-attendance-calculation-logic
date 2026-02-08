@@ -19,23 +19,12 @@ Preferred communication style: Simple, everyday language.
 - **Charts**: Recharts for dashboard analytics
 - **Excel Processing**: xlsx library for client-side Excel file parsing
 
-### Backend Architecture
-- **Framework**: Express.js 5 with TypeScript
-- **API Pattern**: RESTful API with typed routes defined in shared/routes.ts
-- **Database ORM**: Drizzle ORM with PostgreSQL dialect
-- **Validation**: Zod schemas shared between client and server via drizzle-zod integration
-- **Build System**: Vite for frontend, esbuild for server bundling
-
-### Data Storage
-- **Database**: PostgreSQL (required, configured via DATABASE_URL environment variable)
-- **Schema Location**: shared/schema.ts contains all table definitions
-- **Key Tables**:
-  - `employees`: Employee master data with Arabic names, department, shift info
-  - `biometricPunches`: Raw biometric attendance stamps
-  - `attendanceRecords`: Processed daily attendance with hours, penalties, overtime
-  - `excelTemplates`: Configurable Excel import/export column mappings
-  - `specialRules`: Priority-based attendance rules (custom shifts, exemptions)
-  - `adjustments`: Leave records, missions, permissions
+### Application Type
+- **Frontend-only**: This is a client-side React application served by Vite dev server
+- **No backend server**: All data processing happens in the browser
+- **State Management**: Zustand for client-side state, with custom hooks
+- **Build System**: Vite for development and production builds
+- **Port**: Runs on port 5000 with host 0.0.0.0 for Replit compatibility
 
 ### Shared Code Pattern
 - TypeScript interfaces and Zod schemas are defined in the `shared/` directory
