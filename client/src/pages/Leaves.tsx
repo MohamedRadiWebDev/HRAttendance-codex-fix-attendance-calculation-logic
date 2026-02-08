@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import {
   useLeaves,
@@ -61,6 +62,7 @@ export default function Leaves() {
   });
   const [holidayForm, setHolidayForm] = useState({ date: "", name: "" });
   const [selectedHolidayDate, setSelectedHolidayDate] = useState<string>("");
+  const [activeTab, setActiveTab] = useState<"official" | "other">("official");
 
   const [form, setForm] = useState({
     type: "official",
@@ -279,7 +281,13 @@ export default function Leaves() {
       <div className="flex-1 flex flex-col overflow-hidden">
         <Header title="إدارة الإجازات" />
         <main className="flex-1 overflow-y-auto p-8 space-y-6">
-          <div className="bg-white rounded-2xl border border-border/50 shadow-sm p-6 space-y-6">
+          <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as "official" | "other")}>
+            <TabsList className="grid w-full max-w-md grid-cols-2">
+              <TabsTrigger value="official">الإجازات الرسمية</TabsTrigger>
+              <TabsTrigger value="other">الإجازات الأخرى</TabsTrigger>
+            </TabsList>
+            <TabsContent value="official" className="space-y-6">
+              <div className="bg-white rounded-2xl border border-border/50 shadow-sm p-6 space-y-6">
             <div className="flex flex-col md:flex-row md:items-end gap-4">
               <div className="flex-1 space-y-2">
                 <label className="text-sm font-medium">تاريخ الإجازة الرسمية</label>
@@ -443,15 +451,16 @@ export default function Leaves() {
                 </div>
               </div>
             )}
-          </div>
-          <div className="bg-white rounded-2xl border border-border/50 shadow-sm p-6 space-y-4">
+              </div>
+            </TabsContent>
+            <TabsContent value="other" className="space-y-6">
+              <div className="bg-white rounded-2xl border border-border/50 shadow-sm p-6 space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <Select value={form.type} onValueChange={(value) => setForm((prev) => ({ ...prev, type: value }))}>
                 <SelectTrigger>
                   <SelectValue placeholder="النوع" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="official">اجازة رسمية</SelectItem>
                   <SelectItem value="collections">اجازات التحصيل</SelectItem>
                 </SelectContent>
               </Select>
@@ -510,10 +519,10 @@ export default function Leaves() {
                 استيراد
               </Button>
             </div>
-          </div>
+              </div>
 
-          {importPreview.length > 0 && (
-            <div className="bg-white rounded-2xl border border-border/50 shadow-sm p-6 space-y-4">
+              {importPreview.length > 0 && (
+                <div className="bg-white rounded-2xl border border-border/50 shadow-sm p-6 space-y-4">
               <h3 className="text-lg font-bold">تعيين أعمدة ملف الإجازات</h3>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <Select value={mapping.employeeCode} onValueChange={(value) => setMapping((prev) => ({ ...prev, employeeCode: value }))}>
@@ -601,69 +610,71 @@ export default function Leaves() {
                   إلغاء
                 </Button>
               </div>
-            </div>
-          )}
+                </div>
+              )}
 
-          <div className="bg-white rounded-2xl border border-border/50 shadow-sm overflow-hidden">
-            <table className="w-full text-sm text-right hidden md:table">
-              <thead className="bg-slate-50 text-muted-foreground font-medium">
-                <tr>
-                  <th className="px-4 py-3">النوع</th>
-                  <th className="px-4 py-3">النطاق</th>
-                  <th className="px-4 py-3">القيمة</th>
-                  <th className="px-4 py-3">من</th>
-                  <th className="px-4 py-3">إلى</th>
-                  <th className="px-4 py-3">ملاحظة</th>
-                  <th className="px-4 py-3"></th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border/50">
-                {rows.map((leave: any) => (
-                  <tr key={leave.id}>
-                    <td className="px-4 py-3">{TYPE_LABELS[leave.type] || leave.type}</td>
-                    <td className="px-4 py-3">{SCOPE_LABELS[leave.scope] || leave.scope}</td>
-                    <td className="px-4 py-3">{leave.scopeValue || "-"}</td>
-                    <td className="px-4 py-3">{leave.startDate}</td>
-                    <td className="px-4 py-3">{leave.endDate}</td>
-                    <td className="px-4 py-3">{leave.note || "-"}</td>
-                    <td className="px-4 py-3">
-                      <Button
-                        variant="ghost"
-                        onClick={() => deleteLeave.mutateAsync(leave.id)}
-                      >
+              <div className="bg-white rounded-2xl border border-border/50 shadow-sm overflow-hidden">
+                <table className="w-full text-sm text-right hidden md:table">
+                  <thead className="bg-slate-50 text-muted-foreground font-medium">
+                    <tr>
+                      <th className="px-4 py-3">النوع</th>
+                      <th className="px-4 py-3">النطاق</th>
+                      <th className="px-4 py-3">القيمة</th>
+                      <th className="px-4 py-3">من</th>
+                      <th className="px-4 py-3">إلى</th>
+                      <th className="px-4 py-3">ملاحظة</th>
+                      <th className="px-4 py-3"></th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border/50">
+                    {rows.map((leave: any) => (
+                      <tr key={leave.id}>
+                        <td className="px-4 py-3">{TYPE_LABELS[leave.type] || leave.type}</td>
+                        <td className="px-4 py-3">{SCOPE_LABELS[leave.scope] || leave.scope}</td>
+                        <td className="px-4 py-3">{leave.scopeValue || "-"}</td>
+                        <td className="px-4 py-3">{leave.startDate}</td>
+                        <td className="px-4 py-3">{leave.endDate}</td>
+                        <td className="px-4 py-3">{leave.note || "-"}</td>
+                        <td className="px-4 py-3">
+                          <Button
+                            variant="ghost"
+                            onClick={() => deleteLeave.mutateAsync(leave.id)}
+                          >
+                            حذف
+                          </Button>
+                        </td>
+                      </tr>
+                    ))}
+                    {rows.length === 0 && (
+                      <tr>
+                        <td colSpan={7} className="px-4 py-6 text-center text-muted-foreground">
+                          لا توجد إجازات مسجلة
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+                <div className="md:hidden space-y-3 p-4">
+                  {rows.map((leave: any) => (
+                    <div key={leave.id} className="border border-border/50 rounded-xl p-4 space-y-2">
+                      <div className="font-semibold">{TYPE_LABELS[leave.type] || leave.type}</div>
+                      <div className="text-sm">النطاق: {SCOPE_LABELS[leave.scope] || leave.scope}</div>
+                      <div className="text-sm">القيمة: {leave.scopeValue || "-"}</div>
+                      <div className="text-sm">من: {leave.startDate}</div>
+                      <div className="text-sm">إلى: {leave.endDate}</div>
+                      <div className="text-sm">ملاحظة: {leave.note || "-"}</div>
+                      <Button variant="ghost" onClick={() => deleteLeave.mutateAsync(leave.id)}>
                         حذف
                       </Button>
-                    </td>
-                  </tr>
-                ))}
-                {rows.length === 0 && (
-                  <tr>
-                    <td colSpan={7} className="px-4 py-6 text-center text-muted-foreground">
-                      لا توجد إجازات مسجلة
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-            <div className="md:hidden space-y-3 p-4">
-              {rows.map((leave: any) => (
-                <div key={leave.id} className="border border-border/50 rounded-xl p-4 space-y-2">
-                  <div className="font-semibold">{TYPE_LABELS[leave.type] || leave.type}</div>
-                  <div className="text-sm">النطاق: {SCOPE_LABELS[leave.scope] || leave.scope}</div>
-                  <div className="text-sm">القيمة: {leave.scopeValue || "-"}</div>
-                  <div className="text-sm">من: {leave.startDate}</div>
-                  <div className="text-sm">إلى: {leave.endDate}</div>
-                  <div className="text-sm">ملاحظة: {leave.note || "-"}</div>
-                  <Button variant="ghost" onClick={() => deleteLeave.mutateAsync(leave.id)}>
-                    حذف
-                  </Button>
+                    </div>
+                  ))}
+                  {rows.length === 0 && (
+                    <div className="text-center text-muted-foreground">لا توجد إجازات مسجلة</div>
+                  )}
                 </div>
-              ))}
-              {rows.length === 0 && (
-                <div className="text-center text-muted-foreground">لا توجد إجازات مسجلة</div>
-              )}
-            </div>
-          </div>
+              </div>
+            </TabsContent>
+          </Tabs>
         </main>
       </div>
     </div>
