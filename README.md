@@ -46,15 +46,16 @@ A comprehensive, production-ready HR management system tailored for Arabic-speak
 4.  **Process**: Run "Attendance Processing". The engine scans punches, applies rules, and generates `attendance_records`.
 5.  **Report**: Export results to Excel (Detail or Summary format).
 
-## 🏗️ Architecture
+## 🏗️ Architecture (Frontend-Only)
 
 ```ascii
-+-----------------------+      +-----------------------+      +-----------------------+
-|       Frontend        |      |        Backend        |      |       Database        |
-|   (React + Vite)      | <--> |   (Express + Node)    | <--> |     (PostgreSQL)      |
-|   - RTL Layout        |      |   - Attendance Engine |      |   - Drizzle ORM       |
-|   - TanStack Query    |      |   - Excel Parser      |      |   - Schema-first      |
-+-----------------------+      +-----------------------+      +-----------------------+
++------------------------------+
+|          Frontend            |
+|       (React + Vite)         |
+|  - In-memory attendance      |
+|  - Excel import/export       |
+|  - Offline-capable           |
++------------------------------+
 ```
 
 ## 📁 Folder Structure
@@ -62,88 +63,52 @@ A comprehensive, production-ready HR management system tailored for Arabic-speak
 - `client/` - React frontend application.
   - `src/pages/` - Individual application screens.
   - `src/components/` - Reusable UI components (Shadcn).
-- `server/` - Express backend.
-  - `attendance-utils.ts` - **The Core Engine**: Logic for penalty and hour calculations.
-  - `routes.ts` - API endpoints and processing controller.
-  - `storage.ts` - Database interaction layer using Drizzle.
+  - `src/engine/` - Pure attendance rule engine.
+  - `src/store/` - In-memory state (employees, punches, rules, records).
+  - `src/importers/` - Excel import helpers.
+  - `src/exporters/` - Excel export helpers (detail + summary).
 - `shared/` - Shared TypeScript types and Zod schemas.
-  - `schema.ts` - Database table definitions.
+  - `schema.ts` - Data contracts used in the frontend.
 
-## 🗄️ Database
+## 🗄️ Storage
 
-### Tables Overview
-- `employees`: Core staff data and shift defaults.
-- `biometric_punches`: Raw logs from the fingerprint machines.
-- `attendance_records`: The output of the processing engine.
-- `adjustments`: Missions, permissions, and half-day excuses.
-- `special_rules`: Configurable shifts and exemptions.
-
-### Migrations
-Handled via `drizzle-kit`. To sync schema:
-```bash
-npm run db:push
-```
-
-## 🔌 API Endpoints
-
-| Method | Path | Purpose |
-| :--- | :--- | :--- |
-| GET | `/api/employees` | List all staff |
-| POST | `/api/attendance/process` | Trigger the attendance engine for a date range |
-| GET | `/api/attendance` | Fetch processed records with filters |
-| POST | `/api/adjustments/import` | Bulk import missions/permissions |
-| POST | `/api/punches/import` | Upload raw biometric data |
+All data is processed in-memory in the browser. No database or backend is required.
 
 ## 💻 Local Development
 
-1.  **Prerequisites**: Node.js 20+, PostgreSQL.
+1.  **Prerequisites**: Node.js 20+.
 2.  **Setup**:
     ```bash
     npm install
     ```
-3.  **Environment Variables**:
-    Create a `.env` file or set in shell:
-    ```bash
-    DATABASE_URL=postgres://user:pass@localhost:5432/db_name
-    ```
-4.  **Run**:
+3.  **Run**:
     ```bash
     npm run dev
     ```
 
-## 🚀 Deployment: Vercel
+## 🚀 Deploy to Vercel (Frontend-only)
 
-### Recommended Approach
-Since this app uses an Express backend, the easiest way to deploy to Vercel is to use **Vercel Serverless Functions**:
+1.  Push the repository to GitHub.
+2.  In Vercel, click **New Project** and import the repo.
+3.  Root Directory: **/** (repo root).
+4.  Framework preset: **Vite**.
+5.  Build Command: `npm run build`
+6.  Output Directory: `dist/public`
+7.  Deploy.
 
-1.  Move `server/index.ts` logic into `api/index.ts` (Vercel's entry point).
-2.  Configure `vercel.json` to route all requests to the serverless function.
-3.  Set `DATABASE_URL` in Vercel project settings.
+To enable SPA routing on refresh, the repo includes a `vercel.json` rewrite rule and explicit build/output settings that match `vite.config.ts`.
 
-**Note**: For heavy attendance processing (>10s), Vercel's hobby tier timeout might trigger. Consider a separate backend host (Railway/Render) for the `server/` folder if processing large datasets.
+## 📌 Official Holiday + Comp Day (يوم بالبدل)
 
-## 💾 Database: Free External Options
-
--   **Neon (Recommended)**: Serverless Postgres. Perfectly matches the Drizzle configuration.
--   **Supabase**: Provides a full Postgres instance. Use the Connection String mode.
--   **Aiven**: Reliable managed Postgres.
-
-**Example `DATABASE_URL`**:
-`postgres://alex:password@ep-cool-darkness-123456.us-east-2.aws.neon.tech/neondb?sslmode=require`
-
-## 📋 Migration Checklist (Replit → Vercel)
-
-- [ ] Export environment variables (`DATABASE_URL`).
-- [ ] Ensure `drizzle-kit push` is run against the new production DB.
-- [ ] Update frontend API base URL (if hosting backend separately).
-- [ ] Verify `tz` (Timezone) settings. The app defaults to Cairo (GMT+2) in `server/routes.ts`.
-- [ ] Test Excel imports with the new file size limits on the target platform.
+1.  أضف الإجازات الرسمية من شاشة **إدارة الإجازات** (تاريخ + اسم).
+2.  بعد المعالجة، افتح نفس الشاشة واختر تاريخ الإجازة لعرض الموظفين.
+3.  إذا حضر الموظف في الإجازة الرسمية يتم احتساب **يوم بالبدل** تلقائياً، ويمكن التعديل اليدوي عبر مفتاح **حضر؟**.
+4.  التصدير يضيف الأعمدة: **نوع اليوم / حضر في الإجازة الرسمية؟ / يوم بالبدل** في الشيت التفصيلي، ويضيف إجماليات الإجازات الرسمية ورصيد البدل في الملخص.
 
 ## 🛠️ Troubleshooting
 
 - **Excel date parsing**: Ensure the `History` columns in Excel are formatted as `Date/Time` or `Text` according to the template mapping.
 - **Missing Punches**: Check if the employee code in the biometric file matches the `code` field in the Employee table exactly.
-- **Workflow Error**: If the server fails to start, ensure `tsx` is available and `DATABASE_URL` is valid.
 
 ## 📜 License
 Internal Enterprise License. Contact HR for details.
