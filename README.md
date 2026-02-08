@@ -98,6 +98,13 @@ All data is processed in-memory in the browser. No database or backend is requir
 
 To enable SPA routing on refresh, the repo includes a `vercel.json` rewrite rule and explicit build/output settings that match `vite.config.ts`.
 
+## 📌 Official Holiday + Comp Day (يوم بالبدل)
+
+1.  أضف الإجازات الرسمية من شاشة **إدارة الإجازات** (تاريخ + اسم).
+2.  بعد المعالجة، افتح نفس الشاشة واختر تاريخ الإجازة لعرض الموظفين.
+3.  إذا حضر الموظف في الإجازة الرسمية يتم احتساب **يوم بالبدل** تلقائياً، ويمكن التعديل اليدوي عبر مفتاح **حضر؟**.
+4.  التصدير يضيف الأعمدة: **نوع اليوم / حضر في الإجازة الرسمية؟ / يوم بالبدل** في الشيت التفصيلي، ويضيف إجماليات الإجازات الرسمية ورصيد البدل في الملخص.
+
 ## 🛠️ Troubleshooting
 
 - **Excel date parsing**: Ensure the `History` columns in Excel are formatted as `Date/Time` or `Text` according to the template mapping.

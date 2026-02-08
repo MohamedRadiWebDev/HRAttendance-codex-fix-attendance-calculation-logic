@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import type { InsertAdjustment, InsertLeave, InsertSpecialRule, InsertTemplate } from "@shared/schema";
+import type { InsertAdjustment, InsertLeave, InsertOfficialHoliday, InsertSpecialRule, InsertTemplate } from "@shared/schema";
 import { useAttendanceStore, type AttendanceStoreState } from "@/store/attendanceStore";
 
 const useStoreMutation = <TInput, TResult>(
@@ -107,6 +107,21 @@ export function useDeleteTemplate() {
 export function useLeaves() {
   const leaves = useAttendanceStore((state: AttendanceStoreState) => state.leaves);
   return { data: leaves, isLoading: false };
+}
+
+export function useOfficialHolidays() {
+  const officialHolidays = useAttendanceStore((state: AttendanceStoreState) => state.officialHolidays);
+  return { data: officialHolidays, isLoading: false };
+}
+
+export function useCreateOfficialHoliday() {
+  const createOfficialHoliday = useAttendanceStore((state: AttendanceStoreState) => state.createOfficialHoliday);
+  return useStoreMutation<InsertOfficialHoliday, any>(createOfficialHoliday);
+}
+
+export function useDeleteOfficialHoliday() {
+  const deleteOfficialHoliday = useAttendanceStore((state: AttendanceStoreState) => state.deleteOfficialHoliday);
+  return useStoreMutation<number, void>(deleteOfficialHoliday);
 }
 
 export function useCreateLeave() {

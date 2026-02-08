@@ -5,13 +5,14 @@ import { Header } from "@/components/Header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { RefreshCw, Download, Search } from "lucide-react";
-import { useAttendanceRecords, useProcessAttendance } from "@/hooks/use-attendance";
+import { useAttendanceRecords, useProcessAttendance, useUpdateAttendanceRecord } from "@/hooks/use-attendance";
 import { useEmployees } from "@/hooks/use-employees";
 import { useAdjustments } from "@/hooks/use-data";
 import { format, parse } from "date-fns";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import * as XLSX from 'xlsx';
 import { buildAttendanceExportRows } from "@/exporters/attendanceExport";
 
@@ -31,6 +32,7 @@ export default function Attendance() {
   const totalPages = limit > 0 ? Math.ceil(total / limit) : 1;
   const { data: employees } = useEmployees();
   const processAttendance = useProcessAttendance();
+  const updateAttendanceRecord = useUpdateAttendanceRecord();
   const { toast } = useToast();
 
   const parseDateInput = (value: string) => {
@@ -118,6 +120,17 @@ export default function Attendance() {
     return map;
   }, [adjustments]);
 
+  const getWorkedOnHoliday = (record: any) => {
+    if (!record.isOfficialHoliday) return false;
+    if (record.workedOnOfficialHoliday !== null && record.workedOnOfficialHoliday !== undefined) {
+      return Boolean(record.workedOnOfficialHoliday);
+    }
+    const autoWorked = Boolean(record.checkIn || record.checkOut)
+      || (typeof record.totalHours === "number" && record.totalHours > 0)
+      || Boolean(record.missionStart && record.missionEnd);
+    return autoWorked;
+  };
+
   useEffect(() => {
     setPage(1);
   }, [dateRange.start, dateRange.end, employeeFilter, sectorFilter]);
@@ -147,20 +160,21 @@ export default function Attendance() {
 
     detailSheet["!cols"] = [
       { wch: 12 }, { wch: 10 }, { wch: 10 }, { wch: 20 }, { wch: 10 },
-      { wch: 10 }, { wch: 12 }, { wch: 10 }, { wch: 14 }, { wch: 10 },
-      { wch: 10 }, { wch: 12 }, { wch: 10 }, { wch: 8 }, { wch: 14 },
-      { wch: 30 },
+      { wch: 10 }, { wch: 12 }, { wch: 10 }, { wch: 14 }, { wch: 16 },
+      { wch: 12 }, { wch: 10 }, { wch: 10 }, { wch: 12 }, { wch: 10 },
+      { wch: 8 }, { wch: 14 }, { wch: 30 },
     ];
 
     summarySheet["!cols"] = [
       { wch: 10 }, { wch: 20 }, { wch: 14 }, { wch: 14 }, { wch: 16 },
-      { wch: 18 }, { wch: 18 }, { wch: 14 }, { wch: 14 }, { wch: 18 },
-      { wch: 16 }, { wch: 14 }, { wch: 14 },
+      { wch: 18 }, { wch: 18 }, { wch: 14 }, { wch: 16 }, { wch: 20 },
+      { wch: 18 }, { wch: 14 }, { wch: 16 }, { wch: 16 }, { wch: 14 },
+      { wch: 14 },
     ];
 
     for (let rowIndex = 1; rowIndex < detailRows.length; rowIndex += 1) {
       const isFridayRow = detailRows[rowIndex][8] === "جمعة";
-      const hasViolation = detailRows[rowIndex][14] !== "";
+      const hasViolation = detailRows[rowIndex][16] !== "";
       const fill = isFridayRow
         ? "D9E8FF"
         : hasViolation
@@ -204,7 +218,7 @@ export default function Attendance() {
         overtimeCell.t = "n";
         overtimeCell.z = "0.00";
       }
-      const penaltyColumns = [10, 11, 12, 13, 14];
+      const penaltyColumns = [12, 13, 14, 15, 16];
       penaltyColumns.forEach((colIndex) => {
         const penaltyCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: colIndex })];
         if (penaltyCell && penaltyCell.v !== "") {
@@ -312,7 +326,7 @@ export default function Attendance() {
             </div>
 
             <div className="flex-1 overflow-auto">
-              <table className="w-full text-sm text-right min-w-[1000px]">
+              <table className="w-full text-sm text-right min-w-[1100px] hidden md:table">
                 <thead className="bg-slate-50 text-muted-foreground font-medium sticky top-0 z-10 shadow-sm">
                   <tr>
                     <th className="px-6 py-4">التاريخ</th>
@@ -322,16 +336,17 @@ export default function Attendance() {
                     <th className="px-6 py-4">ساعات العمل</th>
                     <th className="px-6 py-4">الإضافي</th>
                     <th className="px-6 py-4">الحالة</th>
+                    <th className="px-6 py-4">الإجازة الرسمية</th>
                     <th className="px-6 py-4">ملاحظات</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border/50">
                   {isLoading ? (
-                    <tr><td colSpan={8} className="px-6 py-8 text-center">جاري تحميل البيانات...</td></tr>
+                    <tr><td colSpan={9} className="px-6 py-8 text-center">جاري تحميل البيانات...</td></tr>
                   ) : !dateRange.start || !dateRange.end ? (
-                    <tr><td colSpan={8} className="px-6 py-8 text-center text-muted-foreground">يرجى تحديد الفترة أولاً.</td></tr>
+                    <tr><td colSpan={9} className="px-6 py-8 text-center text-muted-foreground">يرجى تحديد الفترة أولاً.</td></tr>
                   ) : filteredRecords?.length === 0 ? (
-                    <tr><td colSpan={8} className="px-6 py-8 text-center text-muted-foreground">لا توجد سجلات في هذه الفترة. جرّب معالجة الحضور بعد استيراد البصمة.</td></tr>
+                    <tr><td colSpan={9} className="px-6 py-8 text-center text-muted-foreground">لا توجد سجلات في هذه الفترة. جرّب معالجة الحضور بعد استيراد البصمة.</td></tr>
                   ) : (
                     filteredRecords?.map((record: any) => (
                       <tr key={record.id} className="hover:bg-slate-50/50 transition-colors">
@@ -348,7 +363,40 @@ export default function Attendance() {
                           {record.overtimeHours && record.overtimeHours > 0 ? `+${record.overtimeHours.toFixed(2)}` : "-"}
                         </td>
                         <td className="px-6 py-4">
-                          <StatusBadge status={record.status} />
+                          <div className="flex flex-wrap gap-2">
+                            <StatusBadge status={record.status} />
+                            {record.isOfficialHoliday && (
+                              <span className="px-2.5 py-0.5 rounded-full text-xs font-bold border bg-blue-100 text-blue-700 border-blue-200">
+                                إجازة رسمية
+                              </span>
+                            )}
+                            {record.isOfficialHoliday && record.compDayCredit > 0 && (
+                              <span className="px-2.5 py-0.5 rounded-full text-xs font-bold border bg-emerald-100 text-emerald-700 border-emerald-200">
+                                يوم بالبدل
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4">
+                          {record.isOfficialHoliday ? (
+                            <div className="flex items-center gap-2">
+                              <Switch
+                                checked={getWorkedOnHoliday(record)}
+                                onCheckedChange={(value) => {
+                                  updateAttendanceRecord.mutate({
+                                    id: record.id,
+                                    updates: {
+                                      workedOnOfficialHoliday: value,
+                                      compDayCredit: value ? 1 : 0,
+                                    },
+                                  });
+                                }}
+                              />
+                              <span className="text-xs text-muted-foreground">حضر؟</span>
+                            </div>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">-</span>
+                          )}
                         </td>
                         <td className="px-6 py-4">
                           <div className="flex flex-col gap-1">
@@ -383,6 +431,57 @@ export default function Attendance() {
                   )}
                 </tbody>
               </table>
+              <div className="md:hidden space-y-4 p-4">
+                {isLoading ? (
+                  <div className="text-center text-muted-foreground">جاري تحميل البيانات...</div>
+                ) : !dateRange.start || !dateRange.end ? (
+                  <div className="text-center text-muted-foreground">يرجى تحديد الفترة أولاً.</div>
+                ) : filteredRecords?.length === 0 ? (
+                  <div className="text-center text-muted-foreground">لا توجد سجلات في هذه الفترة.</div>
+                ) : (
+                  filteredRecords?.map((record: any) => (
+                    <div key={record.id} className="bg-white border border-border/50 rounded-xl p-4 shadow-sm space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-muted-foreground">{record.date}</span>
+                        <StatusBadge status={record.status} />
+                      </div>
+                      <div className="font-semibold">{record.employeeCode}</div>
+                      <div className="flex justify-between text-sm">
+                        <span>الدخول</span>
+                        <span dir="ltr">{record.checkIn ? format(new Date(record.checkIn), "HH:mm") : "-"}</span>
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <span>الخروج</span>
+                        <span dir="ltr">{record.checkOut ? format(new Date(record.checkOut), "HH:mm") : "-"}</span>
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <span>ساعات العمل</span>
+                        <span>{record.totalHours?.toFixed(2)}</span>
+                      </div>
+                      {record.isOfficialHoliday && (
+                        <div className="flex items-center justify-between text-sm">
+                          <span>حضر في الإجازة الرسمية؟</span>
+                          <Switch
+                            checked={getWorkedOnHoliday(record)}
+                            onCheckedChange={(value) => {
+                              updateAttendanceRecord.mutate({
+                                id: record.id,
+                                updates: {
+                                  workedOnOfficialHoliday: value,
+                                  compDayCredit: value ? 1 : 0,
+                                },
+                              });
+                            }}
+                          />
+                        </div>
+                      )}
+                      {record.compDayCredit > 0 && (
+                        <span className="text-xs font-semibold text-emerald-600">يوم بالبدل</span>
+                      )}
+                    </div>
+                  ))
+                )}
+              </div>
             </div>
 
             {limit > 0 && totalPages > 1 && (
@@ -424,6 +523,7 @@ function StatusBadge({ status }: { status: string | null }) {
     "Friday": "bg-amber-100 text-amber-700 border-amber-200",
     "Friday Attended": "bg-amber-100 text-amber-700 border-amber-200",
     "Comp Day": "bg-emerald-100 text-emerald-700 border-emerald-200",
+    "Official Holiday": "bg-blue-100 text-blue-700 border-blue-200",
   };
   
   const labels: Record<string, string> = {
@@ -434,6 +534,7 @@ function StatusBadge({ status }: { status: string | null }) {
     "Friday": "جمعة",
     "Friday Attended": "جمعة (حضور)",
     "Comp Day": "يوم بالبدل",
+    "Official Holiday": "إجازة رسمية",
   };
 
   const baseStyle = styles[status || ""] || "bg-slate-100 text-slate-600";

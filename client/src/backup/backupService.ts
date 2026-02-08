@@ -15,6 +15,7 @@ export type BackupModuleKey =
   | "rules"
   | "leaves"
   | "adjustments"
+  | "officialHolidays"
   | "config";
 
 export type BackupMeta = {
@@ -34,6 +35,7 @@ export type BackupPayload = {
     rules?: SpecialRule[];
     leaves?: Leave[];
     adjustments?: Adjustment[];
+    officialHolidays?: { id: number; date: string; name: string }[];
     config?: Record<string, unknown>;
   };
 };
@@ -57,6 +59,7 @@ export const buildBackupPayload = (params: {
     rules: SpecialRule[];
     leaves: Leave[];
     adjustments: Adjustment[];
+    officialHolidays?: { id: number; date: string; name: string }[];
     attendanceRecords: AttendanceRecord[];
     config: Record<string, unknown>;
   };
@@ -69,6 +72,7 @@ export const buildBackupPayload = (params: {
   if (selectedModules.includes("rules")) modules.rules = state.rules;
   if (selectedModules.includes("leaves")) modules.leaves = state.leaves;
   if (selectedModules.includes("adjustments")) modules.adjustments = state.adjustments;
+  if (selectedModules.includes("officialHolidays")) modules.officialHolidays = state.officialHolidays || [];
   if (selectedModules.includes("attendanceRecords")) modules.attendanceRecords = state.attendanceRecords;
   if (selectedModules.includes("config")) modules.config = state.config;
 
@@ -84,6 +88,7 @@ export const buildBackupPayload = (params: {
         rules: state.rules.length,
         leaves: state.leaves.length,
         adjustments: state.adjustments.length,
+        officialHolidays: state.officialHolidays?.length ?? 0,
         attendanceRecords: state.attendanceRecords.length,
       },
     },
@@ -108,6 +113,9 @@ export const createBackupZip = (payload: BackupPayload) => {
   }
   if (payload.modules.adjustments) {
     files.push({ name: "adjustments.json", data: encodeText(JSON.stringify(payload.modules.adjustments, null, 2)) });
+  }
+  if (payload.modules.officialHolidays) {
+    files.push({ name: "officialHolidays.json", data: encodeText(JSON.stringify(payload.modules.officialHolidays, null, 2)) });
   }
   if (payload.modules.attendanceRecords) {
     files.push({ name: "attendanceRecords.json", data: encodeText(JSON.stringify(payload.modules.attendanceRecords, null, 2)) });
@@ -136,6 +144,7 @@ export const readBackupZip = async (file: File) => {
   if (files["rules.json"]) modules.rules = JSON.parse(decodeText(files["rules.json"]));
   if (files["leaves.json"]) modules.leaves = JSON.parse(decodeText(files["leaves.json"]));
   if (files["adjustments.json"]) modules.adjustments = JSON.parse(decodeText(files["adjustments.json"]));
+  if (files["officialHolidays.json"]) modules.officialHolidays = JSON.parse(decodeText(files["officialHolidays.json"]));
   if (files["attendanceRecords.json"]) modules.attendanceRecords = JSON.parse(decodeText(files["attendanceRecords.json"]));
   if (files["config.json"]) modules.config = JSON.parse(decodeText(files["config.json"]));
 

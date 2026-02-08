@@ -7,8 +7,10 @@ import type {
   InsertAdjustment,
   InsertEmployee,
   InsertLeave,
+  InsertOfficialHoliday,
   InsertSpecialRule,
   Leave,
+  OfficialHoliday,
   SpecialRule,
 } from "@shared/schema";
 import { processAttendanceRecords } from "@/engine/attendanceEngine";
@@ -21,6 +23,7 @@ type AttendanceState = {
   rules: SpecialRule[];
   adjustments: Adjustment[];
   leaves: Leave[];
+  officialHolidays: OfficialHoliday[];
   attendanceRecords: AttendanceRecord[];
   config: {
     autoBackupEnabled: boolean;
@@ -50,6 +53,9 @@ type AttendanceActions = {
   createLeave: (row: InsertLeave) => Leave;
   deleteLeave: (id: number) => void;
   importLeaves: (rows: InsertLeave[]) => { inserted: number; invalid: { rowIndex?: number; reason?: string }[] };
+  createOfficialHoliday: (row: InsertOfficialHoliday) => OfficialHoliday;
+  deleteOfficialHoliday: (id: number) => void;
+  setOfficialHolidays: (rows: OfficialHoliday[]) => void;
   processAttendance: (params: { startDate: string; endDate: string; timezoneOffsetMinutes?: number }) => {
     message: string;
     processedCount: number;
@@ -61,6 +67,7 @@ type AttendanceActions = {
   setLeaves: (rows: Leave[]) => void;
   setAdjustments: (rows: Adjustment[]) => void;
   setAttendanceRecords: (rows: AttendanceRecord[]) => void;
+  updateAttendanceRecord: (id: number, updates: Partial<AttendanceRecord>) => void;
   setConfig: (config: AttendanceState["config"]) => void;
   getSnapshot: () => AttendanceState;
 };
@@ -75,6 +82,7 @@ const initialState: AttendanceState = {
   rules: [],
   adjustments: [],
   leaves: [],
+  officialHolidays: [],
   attendanceRecords: [],
   config: {
     autoBackupEnabled: false,
@@ -112,6 +120,7 @@ export const AttendanceStoreProvider = ({ children }: { children: React.ReactNod
           "rules",
           "leaves",
           "adjustments",
+          "officialHolidays",
           "attendanceRecords",
           "config",
         ],
@@ -121,6 +130,7 @@ export const AttendanceStoreProvider = ({ children }: { children: React.ReactNod
           rules: state.rules.length,
           leaves: state.leaves.length,
           adjustments: state.adjustments.length,
+          officialHolidays: state.officialHolidays.length,
           attendanceRecords: state.attendanceRecords.length,
         },
       },
@@ -130,6 +140,7 @@ export const AttendanceStoreProvider = ({ children }: { children: React.ReactNod
         rules: state.rules,
         leaves: state.leaves,
         adjustments: state.adjustments,
+        officialHolidays: state.officialHolidays,
         attendanceRecords: state.attendanceRecords,
         config: state.config,
       },
@@ -332,17 +343,40 @@ export const AttendanceStoreProvider = ({ children }: { children: React.ReactNod
       });
       return { inserted, invalid: [] };
     },
+    createOfficialHoliday: (row) => {
+      const current = stateRef.current;
+      const holiday: OfficialHoliday = {
+        id: current.officialHolidays.length + 1,
+        ...row,
+      } as OfficialHoliday;
+      setState({
+        ...current,
+        officialHolidays: [...current.officialHolidays, holiday],
+      });
+      return holiday;
+    },
+    deleteOfficialHoliday: (id) => {
+      const current = stateRef.current;
+      setState({ ...current, officialHolidays: current.officialHolidays.filter((holiday) => holiday.id !== id) });
+    },
     processAttendance: ({ startDate, endDate, timezoneOffsetMinutes }) => {
       const current = stateRef.current;
+      const overrideMap = new Map<string, boolean>();
+      current.attendanceRecords.forEach((record) => {
+        if (record.workedOnOfficialHoliday === null || record.workedOnOfficialHoliday === undefined) return;
+        overrideMap.set(`${record.employeeCode}__${record.date}`, record.workedOnOfficialHoliday);
+      });
       const records = processAttendanceRecords({
         employees: current.employees,
         punches: current.punches,
         rules: current.rules,
         leaves: current.leaves,
+        officialHolidays: current.officialHolidays,
         adjustments: current.adjustments,
         startDate,
         endDate,
         timezoneOffsetMinutes,
+        workedOnOfficialHolidayOverrides: overrideMap,
       });
 
       const nextRecordIdStart = current.nextIds.record;
@@ -376,6 +410,7 @@ export const AttendanceStoreProvider = ({ children }: { children: React.ReactNod
         rules: [],
         adjustments: [],
         leaves: [],
+        officialHolidays: [],
         attendanceRecords: [],
         config: {
           autoBackupEnabled: false,
@@ -416,6 +451,10 @@ export const AttendanceStoreProvider = ({ children }: { children: React.ReactNod
         nextIds: { ...current.nextIds, leave: Math.max(current.nextIds.leave, maxId + 1) },
       });
     },
+    setOfficialHolidays: (rows) => {
+      const current = stateRef.current;
+      setState({ ...current, officialHolidays: rows });
+    },
     setAdjustments: (rows) => {
       const current = stateRef.current;
       const maxId = rows.reduce((max, row) => Math.max(max, row.id || 0), 0);
@@ -433,6 +472,14 @@ export const AttendanceStoreProvider = ({ children }: { children: React.ReactNod
         attendanceRecords: rows,
         nextIds: { ...current.nextIds, record: Math.max(current.nextIds.record, maxId + 1) },
       });
+    },
+    updateAttendanceRecord: (id, updates) => {
+      const current = stateRef.current;
+      const attendanceRecords = current.attendanceRecords.map((record) => {
+        if (record.id !== id) return record;
+        return { ...record, ...updates } as AttendanceRecord;
+      });
+      setState({ ...current, attendanceRecords });
     },
     setConfig: (config) => {
       const current = stateRef.current;

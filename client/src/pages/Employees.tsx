@@ -64,7 +64,7 @@ export default function Employees() {
             </div>
 
             <div className="overflow-x-auto">
-              <table className="w-full text-sm text-right">
+              <table className="w-full text-sm text-right hidden md:table">
                 <thead className="bg-slate-50 text-muted-foreground font-medium">
                   <tr>
                     <th className="px-6 py-4">كود</th>
@@ -110,6 +110,28 @@ export default function Employees() {
                   )}
                 </tbody>
               </table>
+              <div className="md:hidden space-y-3 p-4">
+                {isLoading ? (
+                  <div className="text-center text-muted-foreground">جاري التحميل...</div>
+                ) : filteredEmployees.length === 0 ? (
+                  <div className="text-center text-muted-foreground">لا يوجد موظفين</div>
+                ) : (
+                  filteredEmployees.map((employee) => (
+                    <div
+                      key={employee.id}
+                      className="border border-border/50 rounded-xl p-4 space-y-2"
+                      onClick={() => setSelectedEmployee(employee)}
+                    >
+                      <div className="font-semibold">{employee.code} - {employee.nameAr}</div>
+                      <div className="text-sm">القطاع: {employee.sector || "-"}</div>
+                      <div className="text-sm">الإدارة: {employee.department || "-"}</div>
+                      <div className="text-sm">الوظيفة: {employee.jobTitle || "-"}</div>
+                      <div className="text-sm">تاريخ التعيين: {employee.hireDate || "-"}</div>
+                      <div className="text-sm">التليفون: {employee.personalPhone || "-"}</div>
+                    </div>
+                  ))
+                )}
+              </div>
             </div>
           </div>
           <Dialog open={Boolean(selectedEmployee)} onOpenChange={(open) => !open && setSelectedEmployee(null)}>

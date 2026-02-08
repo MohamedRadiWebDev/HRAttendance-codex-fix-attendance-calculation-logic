@@ -5,10 +5,21 @@ import { Header } from "@/components/Header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
-import { useLeaves, useCreateLeave, useDeleteLeave, useImportLeaves } from "@/hooks/use-data";
+import {
+  useLeaves,
+  useCreateLeave,
+  useDeleteLeave,
+  useImportLeaves,
+  useOfficialHolidays,
+  useCreateOfficialHoliday,
+  useDeleteOfficialHoliday,
+} from "@/hooks/use-data";
 import { useEmployees } from "@/hooks/use-employees";
 import { format, parse, isValid } from "date-fns";
+import { useAttendanceStore } from "@/store/attendanceStore";
+import { useUpdateAttendanceRecord } from "@/hooks/use-attendance";
 
 const TYPE_LABELS: Record<string, string> = {
   official: "اجازة رسمية",
@@ -27,11 +38,16 @@ const SCOPE_LABELS: Record<string, string> = {
 export default function Leaves() {
   const { data: leaves } = useLeaves();
   const { data: employees } = useEmployees();
+  const { data: officialHolidays } = useOfficialHolidays();
+  const createOfficialHoliday = useCreateOfficialHoliday();
+  const deleteOfficialHoliday = useDeleteOfficialHoliday();
+  const updateAttendanceRecord = useUpdateAttendanceRecord();
   const createLeave = useCreateLeave();
   const deleteLeave = useDeleteLeave();
   const importLeaves = useImportLeaves();
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const attendanceRecords = useAttendanceStore((state) => state.attendanceRecords);
   const [importPreview, setImportPreview] = useState<any[]>([]);
   const [importRows, setImportRows] = useState<any[]>([]);
   const [importHeaders, setImportHeaders] = useState<string[]>([]);
@@ -43,6 +59,8 @@ export default function Leaves() {
     type: "",
     notes: "",
   });
+  const [holidayForm, setHolidayForm] = useState({ date: "", name: "" });
+  const [selectedHolidayDate, setSelectedHolidayDate] = useState<string>("");
 
   const [form, setForm] = useState({
     type: "official",
@@ -54,6 +72,16 @@ export default function Leaves() {
   });
 
   const rows = useMemo(() => leaves || [], [leaves]);
+  const holidayRecordMap = useMemo(() => {
+    const map = new Map<string, any>();
+    if (!selectedHolidayDate) return map;
+    attendanceRecords
+      .filter((record) => record.date === selectedHolidayDate)
+      .forEach((record) => {
+        map.set(record.employeeCode, record);
+      });
+    return map;
+  }, [attendanceRecords, selectedHolidayDate]);
 
   const handleCreate = async () => {
     if (!form.startDate || !form.endDate) {
@@ -130,6 +158,29 @@ export default function Leaves() {
 
   const hasOverlap = (start: string, end: string, otherStart: string, otherEnd: string) => {
     return !(end < otherStart || start > otherEnd);
+  };
+
+  const getWorkedOnHoliday = (record: any) => {
+    if (!record) return false;
+    if (record.workedOnOfficialHoliday !== null && record.workedOnOfficialHoliday !== undefined) {
+      return Boolean(record.workedOnOfficialHoliday);
+    }
+    return Boolean(record.checkIn || record.checkOut)
+      || (typeof record.totalHours === "number" && record.totalHours > 0)
+      || Boolean(record.missionStart && record.missionEnd);
+  };
+
+  const handleAddOfficialHoliday = async () => {
+    if (!holidayForm.date || !holidayForm.name) {
+      toast({ title: "خطأ", description: "يرجى تحديد التاريخ واسم الإجازة.", variant: "destructive" });
+      return;
+    }
+    await createOfficialHoliday.mutateAsync({
+      date: holidayForm.date,
+      name: holidayForm.name,
+    });
+    setHolidayForm({ date: "", name: "" });
+    toast({ title: "تمت الإضافة", description: "تم حفظ الإجازة الرسمية." });
   };
 
   const handleFilePreview = async (file: File) => {
@@ -228,6 +279,171 @@ export default function Leaves() {
       <div className="flex-1 flex flex-col overflow-hidden">
         <Header title="إدارة الإجازات" />
         <main className="flex-1 overflow-y-auto p-8 space-y-6">
+          <div className="bg-white rounded-2xl border border-border/50 shadow-sm p-6 space-y-6">
+            <div className="flex flex-col md:flex-row md:items-end gap-4">
+              <div className="flex-1 space-y-2">
+                <label className="text-sm font-medium">تاريخ الإجازة الرسمية</label>
+                <Input
+                  type="date"
+                  value={holidayForm.date}
+                  onChange={(e) => setHolidayForm((prev) => ({ ...prev, date: e.target.value }))}
+                />
+              </div>
+              <div className="flex-1 space-y-2">
+                <label className="text-sm font-medium">اسم الإجازة</label>
+                <Input
+                  value={holidayForm.name}
+                  onChange={(e) => setHolidayForm((prev) => ({ ...prev, name: e.target.value }))}
+                  placeholder="مثال: عيد العمال"
+                />
+              </div>
+              <Button onClick={handleAddOfficialHoliday}>إضافة إجازة رسمية</Button>
+            </div>
+
+            <div className="overflow-x-auto hidden md:block">
+              <table className="w-full text-sm text-right">
+                <thead className="bg-slate-50 text-muted-foreground font-medium">
+                  <tr>
+                    <th className="px-4 py-3">التاريخ</th>
+                    <th className="px-4 py-3">الاسم</th>
+                    <th className="px-4 py-3"></th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border/50">
+                  {(officialHolidays || []).map((holiday) => (
+                    <tr key={holiday.id}>
+                      <td className="px-4 py-3">{holiday.date}</td>
+                      <td className="px-4 py-3">{holiday.name}</td>
+                      <td className="px-4 py-3">
+                        <Button variant="ghost" onClick={() => deleteOfficialHoliday.mutateAsync(holiday.id)}>
+                          حذف
+                        </Button>
+                      </td>
+                    </tr>
+                  ))}
+                  {(officialHolidays || []).length === 0 && (
+                    <tr>
+                      <td colSpan={3} className="px-4 py-6 text-center text-muted-foreground">
+                        لا توجد إجازات رسمية مسجلة
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+            <div className="md:hidden space-y-3">
+              {(officialHolidays || []).map((holiday) => (
+                <div key={holiday.id} className="border border-border/50 rounded-xl p-4">
+                  <div className="text-sm text-muted-foreground">{holiday.date}</div>
+                  <div className="font-semibold">{holiday.name}</div>
+                  <Button variant="ghost" onClick={() => deleteOfficialHoliday.mutateAsync(holiday.id)}>
+                    حذف
+                  </Button>
+                </div>
+              ))}
+              {(officialHolidays || []).length === 0 && (
+                <div className="text-center text-muted-foreground">لا توجد إجازات رسمية مسجلة</div>
+              )}
+            </div>
+
+            <div className="flex flex-col md:flex-row md:items-center gap-4">
+              <Select value={selectedHolidayDate} onValueChange={setSelectedHolidayDate}>
+                <SelectTrigger className="w-full md:w-60">
+                  <SelectValue placeholder="اختر تاريخ إجازة" />
+                </SelectTrigger>
+                <SelectContent>
+                  {(officialHolidays || []).map((holiday) => (
+                    <SelectItem key={holiday.id} value={holiday.date}>
+                      {holiday.date} - {holiday.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <span className="text-sm text-muted-foreground">
+                يجب معالجة الحضور لإظهار حالة الموظفين في الإجازة الرسمية.
+              </span>
+            </div>
+
+            {selectedHolidayDate && (
+              <div className="space-y-3">
+                <div className="overflow-x-auto hidden md:block">
+                  <table className="w-full text-sm text-right">
+                    <thead className="bg-slate-50 text-muted-foreground font-medium">
+                      <tr>
+                        <th className="px-4 py-3">الكود</th>
+                        <th className="px-4 py-3">الاسم</th>
+                        <th className="px-4 py-3">حضر؟</th>
+                        <th className="px-4 py-3">يوم بالبدل</th>
+                        <th className="px-4 py-3">تجاوز يدوي</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border/50">
+                      {(employees || []).map((employee) => {
+                        const record = holidayRecordMap.get(employee.code);
+                        const worked = record ? getWorkedOnHoliday(record) : false;
+                        return (
+                          <tr key={employee.code}>
+                            <td className="px-4 py-3">{employee.code}</td>
+                            <td className="px-4 py-3">{employee.nameAr}</td>
+                            <td className="px-4 py-3">{record ? (worked ? "نعم" : "لا") : "-"}</td>
+                            <td className="px-4 py-3">{record ? (worked ? 1 : 0) : "-"}</td>
+                            <td className="px-4 py-3">
+                              {record ? (
+                                <Switch
+                                  checked={worked}
+                                  onCheckedChange={(value) =>
+                                    updateAttendanceRecord.mutate({
+                                      id: record.id,
+                                      updates: {
+                                        workedOnOfficialHoliday: value,
+                                        compDayCredit: value ? 1 : 0,
+                                      },
+                                    })
+                                  }
+                                />
+                              ) : (
+                                "-"
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="md:hidden space-y-3">
+                  {(employees || []).map((employee) => {
+                    const record = holidayRecordMap.get(employee.code);
+                    const worked = record ? getWorkedOnHoliday(record) : false;
+                    return (
+                      <div key={employee.code} className="border border-border/50 rounded-xl p-4 space-y-2">
+                        <div className="font-semibold">{employee.code} - {employee.nameAr}</div>
+                        <div className="text-sm">حضر؟ {record ? (worked ? "نعم" : "لا") : "-"}</div>
+                        <div className="text-sm">يوم بالبدل: {record ? (worked ? 1 : 0) : "-"}</div>
+                        {record && (
+                          <div className="flex items-center justify-between text-sm">
+                            <span>تجاوز يدوي</span>
+                            <Switch
+                              checked={worked}
+                              onCheckedChange={(value) =>
+                                updateAttendanceRecord.mutate({
+                                  id: record.id,
+                                  updates: {
+                                    workedOnOfficialHoliday: value,
+                                    compDayCredit: value ? 1 : 0,
+                                  },
+                                })
+                              }
+                            />
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
           <div className="bg-white rounded-2xl border border-border/50 shadow-sm p-6 space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <Select value={form.type} onValueChange={(value) => setForm((prev) => ({ ...prev, type: value }))}>
@@ -389,7 +605,7 @@ export default function Leaves() {
           )}
 
           <div className="bg-white rounded-2xl border border-border/50 shadow-sm overflow-hidden">
-            <table className="w-full text-sm text-right">
+            <table className="w-full text-sm text-right hidden md:table">
               <thead className="bg-slate-50 text-muted-foreground font-medium">
                 <tr>
                   <th className="px-4 py-3">النوع</th>
@@ -429,6 +645,24 @@ export default function Leaves() {
                 )}
               </tbody>
             </table>
+            <div className="md:hidden space-y-3 p-4">
+              {rows.map((leave: any) => (
+                <div key={leave.id} className="border border-border/50 rounded-xl p-4 space-y-2">
+                  <div className="font-semibold">{TYPE_LABELS[leave.type] || leave.type}</div>
+                  <div className="text-sm">النطاق: {SCOPE_LABELS[leave.scope] || leave.scope}</div>
+                  <div className="text-sm">القيمة: {leave.scopeValue || "-"}</div>
+                  <div className="text-sm">من: {leave.startDate}</div>
+                  <div className="text-sm">إلى: {leave.endDate}</div>
+                  <div className="text-sm">ملاحظة: {leave.note || "-"}</div>
+                  <Button variant="ghost" onClick={() => deleteLeave.mutateAsync(leave.id)}>
+                    حذف
+                  </Button>
+                </div>
+              ))}
+              {rows.length === 0 && (
+                <div className="text-center text-muted-foreground">لا توجد إجازات مسجلة</div>
+              )}
+            </div>
           </div>
         </main>
       </div>

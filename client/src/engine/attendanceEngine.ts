@@ -1,5 +1,13 @@
 import { parseRuleScope } from "@shared/rule-scope";
-import type { Adjustment, AttendanceRecord, BiometricPunch, Employee, Leave, SpecialRule } from "@shared/schema";
+import type {
+  Adjustment,
+  AttendanceRecord,
+  BiometricPunch,
+  Employee,
+  Leave,
+  OfficialHoliday,
+  SpecialRule,
+} from "@shared/schema";
 
 export const ADJUSTMENT_TYPES = ["اذن صباحي", "اذن مسائي", "إجازة نص يوم", "مأمورية"] as const;
 
@@ -224,10 +232,12 @@ export type ProcessAttendanceParams = {
   punches: BiometricPunch[];
   rules: SpecialRule[];
   leaves: Leave[];
+  officialHolidays: OfficialHoliday[];
   adjustments: Adjustment[];
   startDate: string;
   endDate: string;
   timezoneOffsetMinutes?: number;
+  workedOnOfficialHolidayOverrides?: Map<string, boolean>;
 };
 
 export const processAttendanceRecords = ({
@@ -235,10 +245,12 @@ export const processAttendanceRecords = ({
   punches,
   rules,
   leaves,
+  officialHolidays,
   adjustments,
   startDate,
   endDate,
   timezoneOffsetMinutes,
+  workedOnOfficialHolidayOverrides,
 }: ProcessAttendanceParams): AttendanceRecord[] => {
   const offsetMinutes = Number.isFinite(Number(timezoneOffsetMinutes))
     ? Number(timezoneOffsetMinutes)
@@ -364,6 +376,8 @@ export const processAttendanceRecords = ({
 
     for (let d = new Date(searchStart); d <= searchEnd; d.setUTCDate(d.getUTCDate() + 1)) {
       const dateStr = formatLocalDay(d);
+      const holidayMatch = officialHolidays.find((holiday) => holiday.date === dateStr);
+      const isOfficialHoliday = Boolean(holidayMatch);
       const prevDate = new Date(d);
       prevDate.setUTCDate(prevDate.getUTCDate() - 1);
       const prevDateStr = formatLocalDay(prevDate);
@@ -481,6 +495,40 @@ export const processAttendanceRecords = ({
         totalHours = (checkOutLocal.getTime() - checkInLocal.getTime()) / (1000 * 60 * 60);
       }
 
+      if (isOfficialHoliday) {
+        const overrideKey = `${employee.code}__${dateStr}`;
+        const override = workedOnOfficialHolidayOverrides?.get(overrideKey);
+        const hasMission = dayAdjustments.some((adj) => adj.type === "مأمورية");
+        const autoWorked = Boolean(checkIn || checkOut) || totalHours > 0 || hasMission;
+        const worked = override ?? autoWorked;
+        const extraNotes = extraNotesByKey.get(dateStr) || [];
+        records.push({
+          id: recordId++,
+          employeeCode: employee.code,
+          date: dateStr,
+          checkIn,
+          checkOut,
+          totalHours,
+          status: "Official Holiday",
+          overtimeHours: 0,
+          penalties: [],
+          isOvernight: false,
+          notes: composeDailyNotes({
+            baseNotes: holidayMatch?.name || "إجازة رسمية",
+            extraNotes,
+            leaveNotes,
+            hasOvernightStay: false,
+          }),
+          missionStart: null,
+          missionEnd: null,
+          halfDayExcused: false,
+          isOfficialHoliday: true,
+          workedOnOfficialHoliday: override ?? null,
+          compDayCredit: worked ? 1 : 0,
+        } as AttendanceRecord);
+        continue;
+      }
+
       if (isFriday || isLeaveDay) {
         const attendedFriday = isFriday && dayPunches.some((punch) => {
           const localPunch = toLocal(punch.punchDatetime);
@@ -522,6 +570,9 @@ export const processAttendanceRecords = ({
           missionStart: null,
           missionEnd: null,
           halfDayExcused: false,
+          isOfficialHoliday: false,
+          workedOnOfficialHoliday: null,
+          compDayCredit: 0,
         } as AttendanceRecord);
         continue;
       }
@@ -682,6 +733,9 @@ export const processAttendanceRecords = ({
           missionStart,
           missionEnd,
           halfDayExcused,
+          isOfficialHoliday: false,
+          workedOnOfficialHoliday: null,
+          compDayCredit: 0,
         } as AttendanceRecord);
       } else {
         const extraNotes = extraNotesByKey.get(dateStr) || [];
@@ -705,6 +759,9 @@ export const processAttendanceRecords = ({
           missionStart: null,
           missionEnd: null,
           halfDayExcused: false,
+          isOfficialHoliday: false,
+          workedOnOfficialHoliday: null,
+          compDayCredit: 0,
         } as AttendanceRecord);
       }
     }

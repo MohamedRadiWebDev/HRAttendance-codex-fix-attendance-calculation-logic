@@ -27,6 +27,7 @@ const MODULE_LABELS: Record<BackupModuleKey, string> = {
   rules: "القواعد",
   leaves: "الإجازات",
   adjustments: "التسويات",
+  officialHolidays: "الإجازات الرسمية",
   config: "الإعدادات",
 };
 
@@ -41,6 +42,7 @@ export default function BackupRestore() {
   const setAdjustments = useAttendanceStore((state) => state.setAdjustments);
   const setAttendanceRecords = useAttendanceStore((state) => state.setAttendanceRecords);
   const setConfig = useAttendanceStore((state) => state.setConfig);
+  const setOfficialHolidays = useAttendanceStore((state) => state.setOfficialHolidays);
   const config = useAttendanceStore((state) => state.config);
 
   const [selectedModules, setSelectedModules] = useState<Record<BackupModuleKey, boolean>>({
@@ -50,6 +52,7 @@ export default function BackupRestore() {
     rules: true,
     leaves: true,
     adjustments: true,
+    officialHolidays: true,
     config: true,
   });
   const [restorePreview, setRestorePreview] = useState<{
@@ -64,6 +67,7 @@ export default function BackupRestore() {
     rules: true,
     leaves: true,
     adjustments: true,
+    officialHolidays: true,
     config: true,
   });
 
@@ -73,6 +77,7 @@ export default function BackupRestore() {
   const rules = useAttendanceStore((state) => state.rules);
   const leaves = useAttendanceStore((state) => state.leaves);
   const adjustments = useAttendanceStore((state) => state.adjustments);
+  const officialHolidays = useAttendanceStore((state) => state.officialHolidays);
 
   const moduleCounts = {
     employees: employees.length,
@@ -81,6 +86,7 @@ export default function BackupRestore() {
     rules: rules.length,
     leaves: leaves.length,
     adjustments: adjustments.length,
+    officialHolidays: officialHolidays.length,
     config: 1,
   };
 
@@ -100,6 +106,7 @@ export default function BackupRestore() {
         rules: snapshot.rules,
         leaves: snapshot.leaves,
         adjustments: snapshot.adjustments,
+        officialHolidays: snapshot.officialHolidays,
         attendanceRecords: snapshot.attendanceRecords,
         config: snapshot.config,
       },
@@ -230,6 +237,22 @@ export default function BackupRestore() {
             if (!map.has(key)) map.set(key, adj);
           });
           setAdjustments(Array.from(map.values()));
+        }
+      });
+    }
+    if (restoreSelection.officialHolidays && modules.officialHolidays) {
+      safeApply("الإجازات الرسمية", () => {
+        if (restoreMode === "replace") {
+          setOfficialHolidays(modules.officialHolidays);
+        } else {
+          const map = new Map(
+            current.officialHolidays.map((holiday: any) => [`${holiday.date}|${holiday.name}`, holiday])
+          );
+          modules.officialHolidays.forEach((holiday: any) => {
+            const key = `${holiday.date}|${holiday.name}`;
+            if (!map.has(key)) map.set(key, holiday);
+          });
+          setOfficialHolidays(Array.from(map.values()));
         }
       });
     }

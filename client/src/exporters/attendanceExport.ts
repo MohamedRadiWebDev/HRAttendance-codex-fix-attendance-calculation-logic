@@ -33,6 +33,8 @@ export const buildAttendanceExportRows = ({
     "ساعات العمل",
     "الإضافي",
     "نوع اليوم",
+    "حضر في الإجازة الرسمية؟",
+    "يوم بالبدل",
     "الحالة",
     "تأخير",
     "انصراف مبكر",
@@ -52,6 +54,9 @@ export const buildAttendanceExportRows = ({
     fridayAttendance: number;
     officialLeaves: number;
     hrLeaves: number;
+    officialHolidayDays: number;
+    officialHolidayAttendance: number;
+    compDayCredits: number;
     absenceDays: number;
     totalLate: number;
     totalEarlyLeave: number;
@@ -71,15 +76,22 @@ export const buildAttendanceExportRows = ({
     const isFriday = dayIndex === 5;
     const attendedFriday = record.status === "Friday Attended";
     const isCompDay = record.status === "Comp Day";
+    const isOfficialHoliday = Boolean(record.isOfficialHoliday);
     const isOfficialLeave = isCompDay && record.notes === "Official Leave";
     const isHrLeave = isCompDay && !isOfficialLeave;
     const dayType = isFriday
       ? "جمعة"
-      : isOfficialLeave
+      : isOfficialHoliday
+        ? "إجازة رسمية"
+        : isOfficialLeave
         ? "إجازة رسمية"
         : isHrLeave
           ? "إجازة"
           : "عمل";
+    const autoWorkedOnHoliday = Boolean(record.checkIn || record.checkOut)
+      || (typeof record.totalHours === "number" && record.totalHours > 0)
+      || Boolean(record.missionStart && record.missionEnd);
+    const workedOnHoliday = record.workedOnOfficialHoliday ?? autoWorkedOnHoliday;
     const status = isFriday
       ? (attendedFriday ? "حضور" : "إجازة")
       : record.status === "Late"
@@ -143,6 +155,8 @@ export const buildAttendanceExportRows = ({
       typeof record.totalHours === "number" ? Number(record.totalHours.toFixed(2)) : "-",
       record.overtimeHours && record.overtimeHours > 0 ? Number(record.overtimeHours.toFixed(2)) : "-",
       dayType,
+      isOfficialHoliday ? (workedOnHoliday ? "نعم" : "لا") : "-",
+      isOfficialHoliday ? (workedOnHoliday ? 1 : 0) : "",
       status,
       isZero(lateValue) ? "" : lateValue,
       isZero(earlyLeaveValue) ? "" : earlyLeaveValue,
@@ -162,6 +176,9 @@ export const buildAttendanceExportRows = ({
       fridayAttendance: 0,
       officialLeaves: 0,
       hrLeaves: 0,
+      officialHolidayDays: 0,
+      officialHolidayAttendance: 0,
+      compDayCredits: 0,
       absenceDays: 0,
       totalLate: 0,
       totalEarlyLeave: 0,
@@ -173,7 +190,10 @@ export const buildAttendanceExportRows = ({
     if (dayType === "عمل") summary.workDays += 1;
     if (dayType === "جمعة") summary.fridays += 1;
     if (isFriday && attendedFriday) summary.fridayAttendance += 1;
-    if (dayType === "إجازة رسمية") summary.officialLeaves += 1;
+    if (isOfficialHoliday) summary.officialHolidayDays += 1;
+    if (isOfficialHoliday && workedOnHoliday) summary.officialHolidayAttendance += 1;
+    if (isOfficialHoliday && workedOnHoliday) summary.compDayCredits += 1;
+    if (dayType === "إجازة رسمية" && !isOfficialHoliday) summary.officialLeaves += 1;
     if (dayType === "إجازة") summary.hrLeaves += 1;
     if (!isFriday && record.status === "Absent") summary.absenceDays += 1;
 
@@ -201,6 +221,9 @@ export const buildAttendanceExportRows = ({
     "عدد أيام الإجازات الرسمية",
     "عدد أيام الإجازات (المحددة)",
     "عدد أيام الغياب",
+    "اجمالي الاجازات الرسمية",
+    "اجمالي حضور الاجازات الرسمية",
+    "رصيد البدل (يوم بالبدل)",
     "إجمالي التأخيرات",
     "إجمالي الانصراف المبكر",
     "إجمالي سهو البصمة",
@@ -221,6 +244,9 @@ export const buildAttendanceExportRows = ({
       summary.officialLeaves,
       summary.hrLeaves,
       summary.absenceDays,
+      summary.officialHolidayDays,
+      summary.officialHolidayAttendance,
+      summary.compDayCredits,
       summary.totalLate,
       summary.totalEarlyLeave,
       summary.totalMissingStamp,

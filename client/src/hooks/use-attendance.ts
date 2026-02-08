@@ -114,3 +114,10 @@ export function useImportPunches() {
   const importPunches = useAttendanceStore((state: AttendanceStoreState) => state.importPunches);
   return useStoreMutation<any[], { count: number }>(importPunches);
 }
+
+export function useUpdateAttendanceRecord() {
+  const updateAttendanceRecord = useAttendanceStore((state: AttendanceStoreState) => state.updateAttendanceRecord);
+  return useStoreMutation<{ id: number; updates: Partial<AttendanceRecord> }, void>(({ id, updates }) => {
+    updateAttendanceRecord(id, updates);
+  });
+}
