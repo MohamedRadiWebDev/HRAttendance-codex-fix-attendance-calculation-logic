@@ -1,8 +1,69 @@
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { api } from "@shared/routes";
+import { useCallback, useState } from "react";
 import { format } from "date-fns";
-import { apiRequest } from "@/lib/queryClient";
-import type { AttendanceRecord, InsertBiometricPunch } from "@shared/schema";
+import { useAttendanceStore, type AttendanceStoreState } from "@/store/attendanceStore";
+import type { AttendanceRecord } from "@shared/schema";
+
+type AttendanceQuery = {
+  data: AttendanceRecord[];
+  total: number;
+  page: number;
+  limit: number;
+};
+
+const useStoreMutation = <TInput, TResult>(
+  action: (input: TInput) => TResult
+) => {
+  const [isPending, setIsPending] = useState(false);
+
+  const mutate = useCallback(
+    (input: TInput, options?: { onSuccess?: (data: TResult) => void; onError?: (error: any) => void }) => {
+      setIsPending(true);
+      try {
+        const result = action(input);
+        options?.onSuccess?.(result);
+      } catch (error) {
+        options?.onError?.(error);
+      } finally {
+        setIsPending(false);
+      }
+    },
+    [action]
+  );
+
+  const mutateAsync = useCallback(
+    async (input: TInput) => {
+      setIsPending(true);
+      try {
+        return action(input);
+      } finally {
+        setIsPending(false);
+      }
+    },
+    [action]
+  );
+
+  return { mutate, mutateAsync, isPending };
+};
+
+const filterAttendanceRecords = (
+  records: AttendanceRecord[],
+  startDate?: string,
+  endDate?: string,
+  employeeCode?: string
+) => {
+  const codes = employeeCode?.includes(",")
+    ? employeeCode.split(",").map((code) => code.trim()).filter(Boolean)
+    : employeeCode
+      ? [employeeCode.trim()]
+      : [];
+
+  return records.filter((record) => {
+    if (startDate && record.date < startDate) return false;
+    if (endDate && record.date > endDate) return false;
+    if (codes.length > 0 && !codes.includes(record.employeeCode)) return false;
+    return true;
+  });
+};
 
 export function useAttendanceRecords(
   startDate?: string,
@@ -18,54 +79,45 @@ export function useAttendanceRecords(
   const effectiveStart = useDefaultRange ? (startDate || defaultStart) : startDate;
   const effectiveEnd = useDefaultRange ? (endDate || defaultEnd) : endDate;
 
-  const queryParams = new URLSearchParams();
-  if (effectiveStart) queryParams.append("startDate", effectiveStart);
-  if (effectiveEnd) queryParams.append("endDate", effectiveEnd);
-  if (employeeCode) queryParams.append("employeeCode", employeeCode);
-  queryParams.append("page", page.toString());
-  queryParams.append("limit", limit.toString());
+  const attendanceRecords = useAttendanceStore((state: AttendanceStoreState) => state.attendanceRecords);
+  const filtered = filterAttendanceRecords(attendanceRecords, effectiveStart, effectiveEnd, employeeCode);
 
-  const url = `${api.attendance.list.path}?${queryParams.toString()}`;
-
-  return useQuery({
-    queryKey: [api.attendance.list.path, effectiveStart, effectiveEnd, employeeCode, page, limit, useDefaultRange],
-    enabled: !!effectiveStart && !!effectiveEnd,
-    queryFn: async () => {
-      const res = await fetch(url);
-      if (!res.ok) throw new Error("Failed to fetch attendance");
-      return await res.json();
-    },
+  const sorted = [...filtered].sort((a, b) => {
+    if (a.date === b.date) return (b.id ?? 0) - (a.id ?? 0);
+    return b.date.localeCompare(a.date);
   });
+
+  const safeLimit = Number.isFinite(limit) && limit > 0 ? limit : 0;
+  const safePage = Number.isFinite(page) && page > 0 ? page : 1;
+  const offset = safeLimit > 0 ? (safePage - 1) * safeLimit : 0;
+  const data = safeLimit > 0 ? sorted.slice(offset, offset + safeLimit) : sorted;
+
+  return {
+    data: {
+      data,
+      total: sorted.length,
+      page: safePage,
+      limit: safeLimit,
+    } as AttendanceQuery,
+    isLoading: false,
+  };
 }
 
 export function useProcessAttendance() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: async ({ startDate, endDate }: { startDate: string; endDate: string }) => {
-      const res = await fetch(api.attendance.process.path, {
-        method: api.attendance.process.method,
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ startDate, endDate }),
-      });
-      if (!res.ok) throw new Error("Failed to process attendance");
-      return api.attendance.process.responses[200].parse(await res.json());
-    },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: [api.attendance.list.path] }),
-  });
+  const processAttendance = useAttendanceStore((state: AttendanceStoreState) => state.processAttendance);
+  return useStoreMutation<{ startDate: string; endDate: string; timezoneOffsetMinutes?: number }, { message: string; processedCount: number }>(
+    processAttendance
+  );
 }
 
 export function useImportPunches() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: async (data: InsertBiometricPunch[]) => {
-      const res = await fetch(api.import.punches.path, {
-        method: api.import.punches.method,
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
-      });
-      if (!res.ok) throw new Error("Failed to import punches");
-      return api.import.punches.responses[200].parse(await res.json());
-    },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: [api.attendance.list.path] }),
+  const importPunches = useAttendanceStore((state: AttendanceStoreState) => state.importPunches);
+  return useStoreMutation<any[], { count: number }>(importPunches);
+}
+
+export function useUpdateAttendanceRecord() {
+  const updateAttendanceRecord = useAttendanceStore((state: AttendanceStoreState) => state.updateAttendanceRecord);
+  return useStoreMutation<{ id: number; updates: Partial<AttendanceRecord> }, void>(({ id, updates }) => {
+    updateAttendanceRecord(id, updates);
   });
 }

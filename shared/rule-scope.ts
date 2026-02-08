@@ -2,10 +2,12 @@ export type RuleScope =
   | { type: "all"; values: [] }
   | { type: "emp" | "dept" | "sector"; values: string[] };
 
+const normalizeScopeValue = (value: string) => value.trim();
+
 const splitScopeValues = (raw: string) =>
   raw
     .split(",")
-    .map((value) => value.trim())
+    .map((value) => normalizeScopeValue(value))
     .filter(Boolean);
 
 export const parseRuleScope = (scope: string): RuleScope => {
@@ -23,6 +25,10 @@ export const parseRuleScope = (scope: string): RuleScope => {
 };
 
 export const buildEmpScope = (values: string[]) => {
-  const normalized = values.map((value) => value.trim()).filter(Boolean);
-  return `emp:${normalized.join(",")}`;
+  const normalized = values.map((value) => normalizeScopeValue(value)).filter(Boolean);
+  const deduped: string[] = [];
+  normalized.forEach((value) => {
+    if (!deduped.includes(value)) deduped.push(value);
+  });
+  return `emp:${deduped.join(",")}`;
 };
