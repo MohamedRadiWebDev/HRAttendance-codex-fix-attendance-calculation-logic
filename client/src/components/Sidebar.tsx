@@ -4,12 +4,11 @@ import {
   LayoutDashboard, 
   Users, 
   CalendarCheck, 
-  FileSpreadsheet, 
   Settings, 
   Upload, 
   Briefcase,
   ClipboardList,
-  ScrollText
+  Archive
 } from "lucide-react";
 
 const navigation = [
@@ -21,6 +20,7 @@ const navigation = [
   { name: 'رفع التعديلات', href: '/bulk-adjustments', icon: Upload },
   { name: 'القواعد والورديات', href: '/rules', icon: Settings },
   { name: 'استيراد بيانات', href: '/import', icon: Upload },
+  { name: 'النسخ الاحتياطي', href: '/backup', icon: Archive },
 ];
 
 export function Sidebar() {
