@@ -4,7 +4,7 @@ import { Header } from "@/components/Header";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Plus, Trash2, Settings2, ShieldCheck, Download, Upload, Pencil } from "lucide-react";
-import { useRules, useDeleteRule, useCreateRule, useUpdateRule } from "@/hooks/use-data";
+import { useRules, useDeleteRule, useCreateRule, useUpdateRule, useImportRules } from "@/hooks/use-data";
 import { useEmployees } from "@/hooks/use-employees";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
@@ -23,6 +23,7 @@ import { useAttendanceStore } from "@/store/attendanceStore";
 export default function Rules() {
   const { data: rules, isLoading } = useRules();
   const deleteRule = useDeleteRule();
+  const importRules = useImportRules();
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const setRules = useAttendanceStore((state) => state.setRules);
