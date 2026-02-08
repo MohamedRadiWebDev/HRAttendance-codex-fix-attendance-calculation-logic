@@ -2,6 +2,7 @@ import { Sidebar } from "@/components/Sidebar";
 import { Header } from "@/components/Header";
 import { StatCard } from "@/components/StatCard";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Users, Clock, AlertTriangle, CheckCircle, Trash2 } from "lucide-react";
 import { useAttendanceRecords } from "@/hooks/use-attendance";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
@@ -9,14 +10,36 @@ import { useEmployees } from "@/hooks/use-employees";
 import { format, parse } from "date-fns";
 import { useEffect, useRef, useState } from "react";
 import { Input } from "@/components/ui/input";
+import { useAttendanceStore, type AttendanceStoreState } from "@/store/attendanceStore";
+import { useToast } from "@/hooks/use-toast";
+import {
+  buildBackupPayload,
+  createBackupZip,
+  readBackupZip,
+  restoreAttendanceRecords,
+  restoreSerializablePunches,
+} from "@/backup/backupService";
+import { clearPersistedState, getLastSavedAt } from "@/store/persistence";
 
 const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444'];
 
 export default function Dashboard() {
-  const { data: employees } = useEmployees();
+  const { toast } = useToast();
+  const wipeData = useAttendanceStore((state: AttendanceStoreState) => state.wipeData);
+  const getSnapshot = useAttendanceStore((state: AttendanceStoreState) => state.getSnapshot);
+  const setEmployees = useAttendanceStore((state: AttendanceStoreState) => state.setEmployees);
+  const setPunches = useAttendanceStore((state: AttendanceStoreState) => state.setPunches);
+  const setRules = useAttendanceStore((state: AttendanceStoreState) => state.setRules);
+  const setLeaves = useAttendanceStore((state: AttendanceStoreState) => state.setLeaves);
+  const setAdjustments = useAttendanceStore((state: AttendanceStoreState) => state.setAdjustments);
+  const setAttendanceRecords = useAttendanceStore((state: AttendanceStoreState) => state.setAttendanceRecords);
+  const setOfficialHolidays = useAttendanceStore((state: AttendanceStoreState) => state.setOfficialHolidays);
+  const setConfig = useAttendanceStore((state: AttendanceStoreState) => state.setConfig);
   const [dateInput, setDateInput] = useState({ start: "", end: "" });
   const [dateRange, setDateRange] = useState<{ start?: string; end?: string }>({});
   const hasInitialized = useRef(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
 
   const parseDateInput = (value: string) => {
     if (!value) return null;
@@ -38,6 +61,16 @@ export default function Dashboard() {
       });
     }
     hasInitialized.current = true;
+  }, []);
+
+  useEffect(() => {
+    setLastSavedAt(getLastSavedAt());
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent).detail as { savedAt?: string } | undefined;
+      if (detail?.savedAt) setLastSavedAt(detail.savedAt);
+    };
+    window.addEventListener("attendance:persistence-saved", handler);
+    return () => window.removeEventListener("attendance:persistence-saved", handler);
   }, []);
 
   const { data: attendanceData } = useAttendanceRecords(
@@ -92,6 +125,66 @@ export default function Dashboard() {
     { name: 'إجازات', value: excusedCount },
   ];
 
+  const handleExportBackup = () => {
+    const snapshot = getSnapshot();
+    const payload = buildBackupPayload({
+      state: {
+        employees: snapshot.employees,
+        punches: snapshot.punches,
+        rules: snapshot.rules,
+        leaves: snapshot.leaves,
+        adjustments: snapshot.adjustments,
+        officialHolidays: snapshot.officialHolidays,
+        attendanceRecords: snapshot.attendanceRecords,
+        config: snapshot.config,
+      },
+      selectedModules: [
+        "employees",
+        "punches",
+        "rules",
+        "leaves",
+        "adjustments",
+        "officialHolidays",
+        "attendanceRecords",
+        "config",
+      ],
+    });
+    const blob = createBackupZip(payload);
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `backup_${format(new Date(), "yyyyMMdd_HHmm")}.zip`;
+    link.click();
+    URL.revokeObjectURL(url);
+    toast({ title: "تم التصدير", description: "تم إنشاء النسخة الاحتياطية بنجاح." });
+  };
+
+  const handleImportBackup = async (file: File) => {
+    try {
+      const payload = await readBackupZip(file);
+      const modules = payload.modules;
+      if (modules.employees) setEmployees(modules.employees);
+      if (modules.punches) setPunches(restoreSerializablePunches(modules.punches));
+      if (modules.rules) setRules(modules.rules);
+      if (modules.leaves) setLeaves(modules.leaves);
+      if (modules.adjustments) setAdjustments(modules.adjustments);
+      if (modules.officialHolidays) setOfficialHolidays(modules.officialHolidays);
+      if (modules.attendanceRecords) setAttendanceRecords(restoreAttendanceRecords(modules.attendanceRecords));
+      if (modules.config) setConfig(modules.config as any);
+      toast({ title: "تم الاستيراد", description: "تم استعادة البيانات بنجاح." });
+    } catch (error: any) {
+      toast({ title: "خطأ", description: error.message || "فشل قراءة الملف.", variant: "destructive" });
+    }
+  };
+
+  const handleClearData = async () => {
+    if (!window.confirm("هل أنت متأكد من مسح كافة بيانات الموقع؟ لا يمكن التراجع عن هذا الإجراء.")) return;
+    await clearPersistedState();
+    wipeData();
+    toast({ title: "تم المسح", description: "تم مسح كافة البيانات بنجاح." });
+    window.location.reload();
+  };
+
   return (
     <div className="flex h-screen bg-slate-50/50">
       <Sidebar />
@@ -141,24 +234,6 @@ export default function Dashboard() {
                     className="border-none bg-transparent h-8 w-36"
                   />
                 </div>
-                <Button 
-                  variant="destructive" 
-                  size="sm" 
-                  className="gap-2"
-                  onClick={() => {
-                    if (window.confirm("هل أنت متأكد من مسح كافة بيانات الموقع؟ لا يمكن التراجع عن هذا الإجراء.")) {
-                      fetch("/api/admin/wipe-data", { method: "POST" })
-                        .then(res => res.json())
-                        .then(data => {
-                          window.alert(data.message);
-                          window.location.reload();
-                        });
-                    }
-                  }}
-                >
-                  <Trash2 className="w-4 h-4" />
-                  مسح كافة البيانات
-                </Button>
               </div>
             </div>
             
@@ -219,7 +294,46 @@ export default function Dashboard() {
                     <span className="text-sm font-bold mr-auto">{item.value}</span>
                   </div>
                 ))}
-              </div>
+                </div>
+            </div>
+
+            <div className="lg:col-span-3">
+              <Card className="border-border/50 shadow-sm">
+                <CardHeader>
+                  <CardTitle className="font-display">إدارة البيانات</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                    <div className="text-sm text-muted-foreground">
+                      {lastSavedAt ? `آخر حفظ: ${format(new Date(lastSavedAt), "dd/MM/yyyy HH:mm")}` : "لم يتم حفظ أي بيانات بعد."}
+                    </div>
+                    <div className="flex flex-wrap gap-3">
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        accept=".zip"
+                        className="hidden"
+                        onChange={(event) => {
+                          const file = event.target.files?.[0];
+                          if (!file) return;
+                          handleImportBackup(file);
+                          event.currentTarget.value = "";
+                        }}
+                      />
+                      <Button variant="outline" onClick={handleExportBackup}>
+                        تصدير نسخة احتياطية
+                      </Button>
+                      <Button variant="outline" onClick={() => fileInputRef.current?.click()}>
+                        استيراد نسخة احتياطية
+                      </Button>
+                      <Button variant="destructive" className="gap-2" onClick={handleClearData}>
+                        <Trash2 className="w-4 h-4" />
+                        مسح كل البيانات
+                      </Button>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
             </div>
           </div>
         </main>
