@@ -376,8 +376,6 @@ export const processAttendanceRecords = ({
 
     for (let d = new Date(searchStart); d <= searchEnd; d.setUTCDate(d.getUTCDate() + 1)) {
       const dateStr = formatLocalDay(d);
-      const holidayMatch = officialHolidays.find((holiday) => holiday.date === dateStr);
-      const isOfficialHoliday = Boolean(holidayMatch);
       const prevDate = new Date(d);
       prevDate.setUTCDate(prevDate.getUTCDate() - 1);
       const prevDateStr = formatLocalDay(prevDate);
@@ -428,6 +426,8 @@ export const processAttendanceRecords = ({
 
     for (let d = new Date(searchStart); d <= searchEnd; d.setUTCDate(d.getUTCDate() + 1)) {
       const dateStr = formatLocalDay(d);
+      const holidayMatch = officialHolidays.find((holiday) => holiday.date === dateStr);
+      const isOfficialHoliday = Boolean(holidayMatch);
 
       const activeRules = rules.filter((rule) => {
         const ruleStart = new Date(rule.startDate);
