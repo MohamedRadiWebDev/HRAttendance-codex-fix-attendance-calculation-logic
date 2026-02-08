@@ -99,6 +99,9 @@ export const attendanceRecords = pgTable("attendance_records", {
   missionStart: text("mission_start"),
   missionEnd: text("mission_end"),
   halfDayExcused: boolean("half_day_excused").default(false),
+  isOfficialHoliday: boolean("is_official_holiday").default(false),
+  workedOnOfficialHoliday: boolean("worked_on_official_holiday"),
+  compDayCredit: doublePrecision("comp_day_credit").default(0),
 });
 
 export const leaves = pgTable("leaves", {
@@ -112,6 +115,12 @@ export const leaves = pgTable("leaves", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+export const officialHolidays = pgTable("official_holidays", {
+  id: serial("id").primaryKey(),
+  date: text("date").notNull(), // YYYY-MM-DD
+  name: text("name").notNull(),
+});
+
 
 // Zod Schemas
 export const insertEmployeeSchema = createInsertSchema(employees).omit({ id: true });
@@ -121,6 +130,7 @@ export const insertRuleSchema = createInsertSchema(specialRules).omit({ id: true
 export const insertAdjustmentSchema = createInsertSchema(adjustments).omit({ id: true });
 export const insertAttendanceSchema = createInsertSchema(attendanceRecords).omit({ id: true });
 export const insertLeaveSchema = createInsertSchema(leaves).omit({ id: true });
+export const insertOfficialHolidaySchema = createInsertSchema(officialHolidays).omit({ id: true });
 
 // Types
 export type Employee = typeof employees.$inferSelect;
@@ -143,3 +153,6 @@ export type InsertLeave = z.infer<typeof insertLeaveSchema>;
 
 export type BiometricPunch = typeof biometricPunches.$inferSelect;
 export type InsertBiometricPunch = z.infer<typeof insertPunchSchema>;
+
+export type OfficialHoliday = typeof officialHolidays.$inferSelect;
+export type InsertOfficialHoliday = z.infer<typeof insertOfficialHolidaySchema>;
