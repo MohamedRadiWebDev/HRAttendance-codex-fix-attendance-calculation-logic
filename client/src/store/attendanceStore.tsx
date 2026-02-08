@@ -112,6 +112,10 @@ export const AttendanceStoreProvider = ({ children }: { children: React.ReactNod
   const hydrationRef = useRef(false);
   const hasHydratedRef = useRef(false);
 
+  const setState = useCallback((nextState: AttendanceState) => {
+    dispatch({ type: "SET_STATE", nextState });
+  }, []);
+
   useEffect(() => {
     stateRef.current = state;
   }, [state]);
@@ -204,10 +208,6 @@ export const AttendanceStoreProvider = ({ children }: { children: React.ReactNod
       }
     };
   }, [state]);
-
-  const setState = useCallback((nextState: AttendanceState) => {
-    dispatch({ type: "SET_STATE", nextState });
-  }, []);
 
   const actions = useMemo<AttendanceActions>(() => ({
     importEmployees: (rows) => {
