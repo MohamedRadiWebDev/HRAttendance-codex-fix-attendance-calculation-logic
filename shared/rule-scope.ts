@@ -3,6 +3,14 @@ export type RuleScope =
   | { type: "emp" | "dept" | "sector"; values: string[] };
 
 const normalizeScopeValue = (value: string) => value.trim();
+export const normalizeEmpCode = (value: string) => {
+  const trimmed = normalizeScopeValue(value);
+  if (!trimmed) return "";
+  if (/^\d+$/.test(trimmed)) {
+    return String(Number(trimmed));
+  }
+  return trimmed;
+};
 
 const splitScopeValues = (raw: string) =>
   raw
@@ -13,7 +21,10 @@ const splitScopeValues = (raw: string) =>
 export const parseRuleScope = (scope: string): RuleScope => {
   if (!scope || scope === "all") return { type: "all", values: [] };
   if (scope.startsWith("emp:")) {
-    return { type: "emp", values: splitScopeValues(scope.slice("emp:".length)) };
+    return {
+      type: "emp",
+      values: splitScopeValues(scope.slice("emp:".length)).map((value) => normalizeEmpCode(value)).filter(Boolean),
+    };
   }
   if (scope.startsWith("dept:")) {
     return { type: "dept", values: splitScopeValues(scope.slice("dept:".length)) };
@@ -25,7 +36,7 @@ export const parseRuleScope = (scope: string): RuleScope => {
 };
 
 export const buildEmpScope = (values: string[]) => {
-  const normalized = values.map((value) => normalizeScopeValue(value)).filter(Boolean);
+  const normalized = values.map((value) => normalizeEmpCode(value)).filter(Boolean);
   const deduped: string[] = [];
   normalized.forEach((value) => {
     if (!deduped.includes(value)) deduped.push(value);
