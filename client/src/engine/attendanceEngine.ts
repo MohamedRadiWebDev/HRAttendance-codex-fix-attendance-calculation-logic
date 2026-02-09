@@ -1,4 +1,4 @@
-import { parseRuleScope } from "@shared/rule-scope";
+import { normalizeEmpCode, parseRuleScope } from "@shared/rule-scope";
 import type {
   Adjustment,
   AttendanceRecord,
@@ -120,7 +120,7 @@ export const resolveShiftForDate = ({
   dateStr: string;
   rules: SpecialRule[];
 }) => {
-  const normalizedEmployeeCode = String(employee.code ?? "").trim();
+      const normalizedEmployeeCode = String(employee.code ?? "").trim();
   const activeRules = rules.filter((rule) => {
     const ruleStart = new Date(rule.startDate);
     const ruleEnd = new Date(rule.endDate);
@@ -132,7 +132,8 @@ export const resolveShiftForDate = ({
     if (rule.scope.startsWith("sector:") && employee.sector === rule.scope.replace("sector:", "")) return true;
     if (rule.scope.startsWith("emp:")) {
       const parsedScope = parseRuleScope(rule.scope);
-      return parsedScope.type === "emp" && parsedScope.values.includes(normalizedEmployeeCode);
+          const normalized = normalizeEmpCode(normalizedEmployeeCode);
+          return parsedScope.type === "emp" && parsedScope.values.includes(normalized);
     }
     return false;
   }).sort((a, b) => (b.priority || 0) - (a.priority || 0));
@@ -269,7 +270,8 @@ const parseEmployeeScope = (scope: string, employee: Employee, normalizedEmploye
   if (scope.startsWith("sector:")) return employee.sector === scope.replace("sector:", "");
   if (scope.startsWith("emp:")) {
     const parsedScope = parseRuleScope(scope);
-    return parsedScope.type === "emp" && parsedScope.values.some((value) => value === normalizedEmployeeCode);
+    const normalized = normalizeEmpCode(normalizedEmployeeCode);
+    return parsedScope.type === "emp" && parsedScope.values.some((value) => value === normalized);
   }
   return false;
 };
