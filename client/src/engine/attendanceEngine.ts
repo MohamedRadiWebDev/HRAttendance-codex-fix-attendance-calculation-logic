@@ -68,10 +68,10 @@ export const computeAdjustmentEffects = ({
     const fromSeconds = timeStringToSeconds(adjustment.fromTime);
     const toSeconds = timeStringToSeconds(adjustment.toTime);
     if (adjustment.type === "اذن صباحي") {
-      effectiveShiftStartSeconds += Math.max(0, toSeconds - fromSeconds);
+      effectiveShiftStartSeconds = Math.max(effectiveShiftStartSeconds, toSeconds);
     }
     if (adjustment.type === "اذن مسائي") {
-      effectiveShiftEndSeconds -= Math.max(0, toSeconds - fromSeconds);
+      effectiveShiftEndSeconds = Math.min(effectiveShiftEndSeconds, fromSeconds);
     }
     if (adjustment.type === "إجازة نص يوم") {
       if (fromSeconds === shiftStartSeconds) {
@@ -108,6 +108,53 @@ export const computeAdjustmentEffects = ({
     halfDayExcused,
     firstStampSeconds,
     lastStampSeconds,
+  };
+};
+
+export const resolveShiftForDate = ({
+  employee,
+  dateStr,
+  rules,
+}: {
+  employee: Employee;
+  dateStr: string;
+  rules: SpecialRule[];
+}) => {
+  const normalizedEmployeeCode = String(employee.code ?? "").trim();
+  const activeRules = rules.filter((rule) => {
+    const ruleStart = new Date(rule.startDate);
+    const ruleEnd = new Date(rule.endDate);
+    const current = new Date(dateStr);
+    if (current < ruleStart || current > ruleEnd) return false;
+
+    if (rule.scope === "all") return true;
+    if (rule.scope.startsWith("dept:") && employee.department === rule.scope.replace("dept:", "")) return true;
+    if (rule.scope.startsWith("sector:") && employee.sector === rule.scope.replace("sector:", "")) return true;
+    if (rule.scope.startsWith("emp:")) {
+      const parsedScope = parseRuleScope(rule.scope);
+      return parsedScope.type === "emp" && parsedScope.values.includes(normalizedEmployeeCode);
+    }
+    return false;
+  }).sort((a, b) => (b.priority || 0) - (a.priority || 0));
+
+  const dayOfWeek = new Date(dateStr).getUTCDay();
+  let shiftStart = "09:00";
+  let shiftEnd = "17:00";
+
+  const shiftRule = activeRules.find((rule) => rule.ruleType === "custom_shift");
+  if (shiftRule) {
+    shiftStart = (shiftRule.params as any).shiftStart || shiftStart;
+    shiftEnd = (shiftRule.params as any).shiftEnd || shiftEnd;
+  } else if (dayOfWeek === 6) {
+    shiftStart = "10:00";
+    shiftEnd = "16:00";
+  }
+
+  return {
+    activeRules,
+    dayOfWeek,
+    shiftStart,
+    shiftEnd,
   };
 };
 
@@ -271,15 +318,6 @@ export const processAttendanceRecords = ({
   const searchStart = new Date(Date.UTC(startYear, startMonth - 1, startDay));
   const searchEnd = new Date(Date.UTC(endYear, endMonth - 1, endDay));
 
-  const scopeCache = new Map<string, ReturnType<typeof parseRuleScope>>();
-  const getParsedScope = (scope: string, cacheKey: string) => {
-    const cached = scopeCache.get(cacheKey);
-    if (cached) return cached;
-    const parsed = parseRuleScope(scope);
-    scopeCache.set(cacheKey, parsed);
-    return parsed;
-  };
-
   const adjustmentsByEmployeeDate = new Map<string, Adjustment[]>();
   adjustments.forEach((adjustment) => {
     const key = `${adjustment.employeeCode}__${adjustment.date}`;
@@ -429,37 +467,11 @@ export const processAttendanceRecords = ({
       const holidayMatch = officialHolidays.find((holiday) => holiday.date === dateStr);
       const isOfficialHoliday = Boolean(holidayMatch);
 
-      const activeRules = rules.filter((rule) => {
-        const ruleStart = new Date(rule.startDate);
-        const ruleEnd = new Date(rule.endDate);
-        const current = new Date(dateStr);
-        if (current < ruleStart || current > ruleEnd) return false;
-
-        if (rule.scope === "all") return true;
-        if (rule.scope.startsWith("dept:") && employee.department === rule.scope.replace("dept:", "")) return true;
-        if (rule.scope.startsWith("sector:") && employee.sector === rule.scope.replace("sector:", "")) return true;
-        if (rule.scope.startsWith("emp:")) {
-          const cacheKey = `${rule.id ?? "no-id"}:${rule.scope}`;
-          const parsedScope = getParsedScope(rule.scope, cacheKey);
-          return parsedScope.type === "emp" && parsedScope.values.includes(normalizedEmployeeCode);
-        }
-        return false;
-      }).sort((a, b) => (b.priority || 0) - (a.priority || 0));
-
-      const dayOfWeek = d.getUTCDay();
-      const isSaturday = dayOfWeek === 6;
-      let currentShiftStart = "09:00";
-      let currentShiftEnd = "17:00";
-
-      const shiftRule = activeRules.find((rule) => rule.ruleType === "custom_shift");
-      if (shiftRule) {
-        currentShiftStart = (shiftRule.params as any).shiftStart || currentShiftStart;
-        currentShiftEnd = (shiftRule.params as any).shiftEnd || currentShiftEnd;
-      } else if (isSaturday) {
-        currentShiftStart = "10:00";
-        currentShiftEnd = "16:00";
-      }
-
+      const { activeRules, dayOfWeek, shiftStart: currentShiftStart, shiftEnd: currentShiftEnd } = resolveShiftForDate({
+        employee,
+        dateStr,
+        rules,
+      });
       const isFriday = dayOfWeek === 5;
       const leaveRule = activeRules.find((rule) => rule.ruleType === "attendance_exempt");
       const leaveTypeRaw = typeof (leaveRule?.params as any)?.leaveType === "string"
