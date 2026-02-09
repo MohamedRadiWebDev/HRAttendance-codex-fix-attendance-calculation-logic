@@ -4,7 +4,7 @@ import { Sidebar } from "@/components/Sidebar";
 import { Header } from "@/components/Header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { RefreshCw, Download, Search } from "lucide-react";
+import { RefreshCw, Download, Search, Clock } from "lucide-react";
 import { useAttendanceRecords, useProcessAttendance, useUpdateAttendanceRecord } from "@/hooks/use-attendance";
 import { useEmployees } from "@/hooks/use-employees";
 import { useAdjustments } from "@/hooks/use-data";
@@ -13,8 +13,14 @@ import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import * as XLSX from 'xlsx';
 import { buildAttendanceExportRows } from "@/exporters/attendanceExport";
+import { useAttendanceStore } from "@/store/attendanceStore";
+import { resolveShiftForDate, timeStringToSeconds } from "@/engine/attendanceEngine";
 
 export default function Attendance() {
   const [location, setLocation] = useLocation();
@@ -31,9 +37,12 @@ export default function Attendance() {
   const total = recordsData?.total || 0;
   const totalPages = limit > 0 ? Math.ceil(total / limit) : 1;
   const { data: employees } = useEmployees();
+  const punches = useAttendanceStore((state) => state.punches);
+  const rules = useAttendanceStore((state) => state.rules);
   const processAttendance = useProcessAttendance();
   const updateAttendanceRecord = useUpdateAttendanceRecord();
   const { toast } = useToast();
+  const [timelineRecord, setTimelineRecord] = useState<any | null>(null);
 
   const parseDateInput = (value: string) => {
     if (!value) return null;
@@ -119,6 +128,32 @@ export default function Attendance() {
     });
     return map;
   }, [adjustments]);
+
+  const employeesByCode = useMemo(() => {
+    return new Map((employees || []).map((employee) => [employee.code, employee]));
+  }, [employees]);
+
+  const getLocalDateKey = (date: Date) => {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  };
+
+  const getPunchesForWindow = (employeeCode: string, dateStr: string, isOvernight: boolean) => {
+    const base = new Date(`${dateStr}T00:00:00`);
+    if (Number.isNaN(base.getTime())) return [];
+    const start = new Date(base);
+    if (isOvernight) start.setHours(6, 0, 0, 0);
+    const end = new Date(start);
+    end.setHours(end.getHours() + 24);
+    return punches.filter((punch) => {
+      if (punch.employeeCode !== employeeCode) return false;
+      const punchDate = new Date(punch.punchDatetime);
+      if (isOvernight) return punchDate >= start && punchDate <= end;
+      return getLocalDateKey(punchDate) === dateStr;
+    }).sort((a, b) => a.punchDatetime.getTime() - b.punchDatetime.getTime());
+  };
 
   const getWorkedOnHoliday = (record: any) => {
     if (!record.isOfficialHoliday) return false;
@@ -400,6 +435,22 @@ export default function Attendance() {
                         </td>
                         <td className="px-6 py-4">
                           <div className="flex flex-col gap-1">
+                            <div className="flex items-center gap-2">
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-7 w-7"
+                                    onClick={() => setTimelineRecord(record)}
+                                  >
+                                    <Clock className="w-4 h-4" />
+                                  </Button>
+                                </TooltipTrigger>
+                                <TooltipContent>عرض الخط الزمني</TooltipContent>
+                              </Tooltip>
+                              <span className="text-[10px] text-muted-foreground">الخط الزمني</span>
+                            </div>
                             {record.penalties && Array.isArray(record.penalties) && record.penalties.length > 0 && (
                               <div className="flex gap-1 flex-wrap">
                                 {(record.penalties as any[]).map((p: any, i: number) => (
@@ -445,6 +496,15 @@ export default function Attendance() {
                         <span className="text-xs text-muted-foreground">{record.date}</span>
                         <StatusBadge status={record.status} />
                       </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="gap-2 w-full"
+                        onClick={() => setTimelineRecord(record)}
+                      >
+                        <Clock className="w-4 h-4" />
+                        عرض الخط الزمني
+                      </Button>
                       <div className="font-semibold">{record.employeeCode}</div>
                       <div className="flex justify-between text-sm">
                         <span>الدخول</span>
@@ -508,6 +568,16 @@ export default function Attendance() {
               </div>
             )}
           </div>
+          <TimelineSheet
+            record={timelineRecord}
+            employee={timelineRecord ? employeesByCode.get(timelineRecord.employeeCode) : null}
+            punches={timelineRecord ? getPunchesForWindow(timelineRecord.employeeCode, timelineRecord.date, Boolean(timelineRecord.isOvernight)) : []}
+            adjustments={timelineRecord ? adjustmentsByKey.get(`${timelineRecord.employeeCode}__${timelineRecord.date}`) || [] : []}
+            rules={rules}
+            onOpenChange={(open) => {
+              if (!open) setTimelineRecord(null);
+            }}
+          />
         </main>
       </div>
     </div>
@@ -546,5 +616,205 @@ function StatusBadge({ status }: { status: string | null }) {
         {label}
       </span>
     </div>
+  );
+}
+
+type TimelineSheetProps = {
+  record: any | null;
+  employee: any | null;
+  punches: { punchDatetime: Date }[];
+  adjustments: any[];
+  rules: any[];
+  onOpenChange: (open: boolean) => void;
+};
+
+function TimelineSheet({ record, employee, punches, adjustments, rules, onOpenChange }: TimelineSheetProps) {
+  const isOpen = Boolean(record);
+  if (!record) {
+    return (
+      <Sheet open={isOpen} onOpenChange={onOpenChange}>
+        <SheetContent side="right" />
+      </Sheet>
+    );
+  }
+
+  const shiftInfo = employee
+    ? resolveShiftForDate({ employee, dateStr: record.date, rules })
+    : { shiftStart: "09:00", shiftEnd: "17:00" };
+  const windowStartHour = record.isOvernight ? 6 : 0;
+  const windowStartSeconds = windowStartHour * 3600;
+
+  const normalizeSeconds = (seconds: number) => {
+    let offset = seconds - windowStartSeconds;
+    if (offset < 0) offset += 24 * 3600;
+    return Math.min(Math.max(offset, 0), 24 * 3600);
+  };
+
+  const punchMarkers = punches.map((punch) => {
+    const date = new Date(punch.punchDatetime);
+    const seconds = date.getHours() * 3600 + date.getMinutes() * 60 + date.getSeconds();
+    return {
+      id: date.getTime(),
+      label: format(date, "HH:mm"),
+      offset: normalizeSeconds(seconds),
+    };
+  });
+
+  const checkIn = record.checkIn ? new Date(record.checkIn) : null;
+  const checkOut = record.checkOut ? new Date(record.checkOut) : null;
+  const checkInOffset = checkIn
+    ? normalizeSeconds(checkIn.getHours() * 3600 + checkIn.getMinutes() * 60 + checkIn.getSeconds())
+    : null;
+  const checkOutOffset = checkOut
+    ? normalizeSeconds(checkOut.getHours() * 3600 + checkOut.getMinutes() * 60 + checkOut.getSeconds())
+    : null;
+
+  const shiftStartOffset = normalizeSeconds(timeStringToSeconds(shiftInfo.shiftStart));
+  const shiftEndOffset = normalizeSeconds(timeStringToSeconds(shiftInfo.shiftEnd));
+  const overtimeStartOffset = normalizeSeconds(timeStringToSeconds(shiftInfo.shiftEnd) + 3600);
+
+  const adjustmentRanges = adjustments.map((adj) => ({
+    ...adj,
+    start: normalizeSeconds(timeStringToSeconds(adj.fromTime)),
+    end: normalizeSeconds(timeStringToSeconds(adj.toTime)),
+  }));
+
+  const penalties = Array.isArray(record.penalties) ? record.penalties : [];
+  const penaltyTotal = penalties.reduce((sum: number, penalty: any) => sum + (Number(penalty?.value) || 0), 0);
+
+  return (
+    <Sheet open={isOpen} onOpenChange={onOpenChange}>
+      <SheetContent side="right" className="w-full sm:max-w-xl">
+        <SheetHeader>
+          <SheetTitle>الخط الزمني للحضور</SheetTitle>
+        </SheetHeader>
+        <div className="mt-6 space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">ملخص اليوم</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3 text-sm">
+              <div className="flex flex-wrap gap-2">
+                <Badge variant="secondary">{record.employeeCode}</Badge>
+                <Badge variant="outline">{record.date}</Badge>
+                <Badge variant="outline">{employee?.nameAr || "-"}</Badge>
+              </div>
+              <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground">
+                <div>بداية الوردية: <span className="text-foreground">{shiftInfo.shiftStart}</span></div>
+                <div>نهاية الوردية: <span className="text-foreground">{shiftInfo.shiftEnd}</span></div>
+                <div>الدخول: <span className="text-foreground">{checkIn ? format(checkIn, "HH:mm") : "-"}</span></div>
+                <div>الخروج: <span className="text-foreground">{checkOut ? format(checkOut, "HH:mm") : "-"}</span></div>
+                <div>ساعات العمل: <span className="text-foreground">{record.totalHours?.toFixed(2) ?? "-"}</span></div>
+                <div>الإضافي: <span className="text-foreground">{record.overtimeHours?.toFixed(2) ?? "-"}</span></div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">خط الزمن</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="relative h-20 rounded-lg border border-border/50 bg-slate-50">
+                <div className="absolute inset-x-0 top-1/2 h-px bg-slate-200" />
+                {[0, 6, 12, 18, 24].map((hour) => {
+                  const offset = ((hour * 3600) / (24 * 3600)) * 100;
+                  return (
+                    <div key={hour} className="absolute top-0 h-full" style={{ left: `${offset}%` }}>
+                      <div className="h-full w-px bg-slate-200" />
+                      <span className="absolute -top-5 -translate-x-1/2 text-[10px] text-muted-foreground">
+                        {(hour + windowStartHour) % 24}:00
+                      </span>
+                    </div>
+                  );
+                })}
+                <div
+                  className="absolute top-[18px] h-10 rounded-md bg-blue-100 border border-blue-200"
+                  style={{
+                    left: `${(shiftStartOffset / (24 * 3600)) * 100}%`,
+                    width: `${Math.max(shiftEndOffset - shiftStartOffset, 0) / (24 * 3600) * 100}%`,
+                  }}
+                />
+                <div className="absolute top-[12px] h-12 border-l-2 border-blue-600" style={{ left: `${(shiftStartOffset / (24 * 3600)) * 100}%` }} />
+                <div className="absolute top-[12px] h-12 border-l-2 border-blue-600" style={{ left: `${(shiftEndOffset / (24 * 3600)) * 100}%` }} />
+                <div className="absolute top-[12px] h-12 border-l-2 border-emerald-600" style={{ left: `${(overtimeStartOffset / (24 * 3600)) * 100}%` }} />
+
+                {adjustmentRanges.map((range, index) => (
+                  <div
+                    key={`${range.type}-${index}`}
+                    className="absolute top-[6px] h-6 rounded-md bg-amber-100 border border-amber-200"
+                    style={{
+                      left: `${(range.start / (24 * 3600)) * 100}%`,
+                      width: `${Math.max(range.end - range.start, 0) / (24 * 3600) * 100}%`,
+                    }}
+                    title={`${range.type} ${range.fromTime}-${range.toTime}`}
+                  />
+                ))}
+
+                {punchMarkers.map((marker) => (
+                  <div
+                    key={marker.id}
+                    className="absolute top-[50px] h-3 w-3 rounded-full bg-slate-700"
+                    style={{ left: `${(marker.offset / (24 * 3600)) * 100}%` }}
+                    title={marker.label}
+                  />
+                ))}
+
+                {checkInOffset !== null && (
+                  <div
+                    className="absolute top-[44px] h-5 w-2 rounded-full bg-emerald-600"
+                    style={{ left: `${(checkInOffset / (24 * 3600)) * 100}%` }}
+                    title="دخول"
+                  />
+                )}
+                {checkOutOffset !== null && (
+                  <div
+                    className="absolute top-[44px] h-5 w-2 rounded-full bg-rose-600"
+                    style={{ left: `${(checkOutOffset / (24 * 3600)) * 100}%` }}
+                    title="خروج"
+                  />
+                )}
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2 text-xs text-muted-foreground">
+                <Badge variant="outline">الوردية</Badge>
+                <Badge variant="outline">الإضافي</Badge>
+                <Badge variant="outline">التسويات</Badge>
+                <Badge variant="outline">البصمات</Badge>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">التفاصيل</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3 text-sm">
+              <div>
+                <span className="font-semibold">البصمات:</span>{" "}
+                {punchMarkers.length > 0 ? punchMarkers.map((marker) => marker.label).join("، ") : "-"}
+              </div>
+              <div>
+                <span className="font-semibold">التسويات:</span>{" "}
+                {adjustments.length > 0
+                  ? adjustments.map((adj) => `${adj.type} (${adj.fromTime}-${adj.toTime})`).join(" | ")
+                  : "-"}
+              </div>
+              <div>
+                <span className="font-semibold">المخالفات:</span>{" "}
+                {penalties.length > 0
+                  ? penalties.map((penalty: any) => `${penalty.type}: ${penalty.value}`).join(" | ")
+                  : "-"}
+              </div>
+              <div>
+                <span className="font-semibold">إجمالي الخصم:</span> {penaltyTotal || 0}
+              </div>
+              <div>
+                <span className="font-semibold">الملاحظات:</span> {record.notes || "-"}
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      </SheetContent>
+    </Sheet>
   );
 }
