@@ -324,6 +324,19 @@ export default function BulkAdjustmentsImport() {
     XLSX.writeFile(wb, "effects-template.xlsx");
   };
 
+  const summaryCounts = useMemo(() => {
+    return validationRows.reduce<Record<AdjustmentStatus, number>>((acc, row) => {
+      acc[row.status] = (acc[row.status] || 0) + 1;
+      return acc;
+    }, {
+      Valid: 0,
+      "Auto-filled": 0,
+      "Auto-inferred": 0,
+      "Needs Review": 0,
+      Invalid: 0,
+    });
+  }, [validationRows]);
+
   return (
     <div className="min-h-screen bg-slate-50" dir="rtl">
       <Sidebar />
@@ -341,6 +354,7 @@ export default function BulkAdjustmentsImport() {
               </div>
               <p className="text-sm text-muted-foreground">الأعمدة المطلوبة: {EFFECT_HEADERS.join(" | ")}</p>
             </div>
+          </div>
 
             <div className="rounded-2xl border bg-white overflow-hidden">
               <div className="p-4 border-b bg-slate-50/50">
@@ -377,9 +391,22 @@ export default function BulkAdjustmentsImport() {
                       <tr>
                         <td colSpan={8} className="py-6 text-center text-muted-foreground">قم برفع ملف المؤثرات للمعاينة.</td>
                       </tr>
-                    )}
+                    ))}
                   </tbody>
                 </table>
+              )}
+            </div>
+
+            <div className="rounded-2xl border bg-white p-5 space-y-4">
+              <div className="flex flex-wrap items-center gap-3 text-sm">
+                <div>صالحة: <Badge variant="secondary">{validRows.length}</Badge></div>
+                <div>غير صالحة: <Badge variant="destructive">{invalidRows.length}</Badge></div>
+              </div>
+              <div className="flex flex-wrap gap-3">
+                <Button onClick={saveEffectsReplace}>حفظ (استبدال)</Button>
+                <Button variant="secondary" onClick={saveEffectsAppend}>حفظ (إضافة)</Button>
+                <Button variant="outline" onClick={applySavedEffects}>تطبيق المؤثرات المحفوظة</Button>
+                <Button variant="ghost" onClick={clearEffects}>مسح المؤثرات المحفوظة</Button>
               </div>
             </div>
 
@@ -396,8 +423,8 @@ export default function BulkAdjustmentsImport() {
               </div>
             </div>
           </div>
-        </main>
-      </div>
+        </div>
+      </main>
     </div>
   );
 }
