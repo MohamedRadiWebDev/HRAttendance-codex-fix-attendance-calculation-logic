@@ -1,4 +1,4 @@
-import { parseRuleScope } from "@shared/rule-scope";
+import { normalizeEmpCode, parseRuleScope } from "@shared/rule-scope";
 import type {
   Adjustment,
   AttendanceRecord,
@@ -9,7 +9,7 @@ import type {
   SpecialRule,
 } from "@shared/schema";
 
-export const ADJUSTMENT_TYPES = ["اذن صباحي", "اذن مسائي", "إجازة نص يوم", "مأمورية"] as const;
+export const ADJUSTMENT_TYPES = ["اذن صباحي", "اذن مسائي", "إجازة نص يوم", "مأمورية", "إجازة بالخصم", "غياب بعذر", "إجازة من الرصيد"] as const;
 
 export type AdjustmentType = (typeof ADJUSTMENT_TYPES)[number];
 
@@ -68,10 +68,10 @@ export const computeAdjustmentEffects = ({
     const fromSeconds = timeStringToSeconds(adjustment.fromTime);
     const toSeconds = timeStringToSeconds(adjustment.toTime);
     if (adjustment.type === "اذن صباحي") {
-      effectiveShiftStartSeconds += Math.max(0, toSeconds - fromSeconds);
+      effectiveShiftStartSeconds = Math.max(effectiveShiftStartSeconds, toSeconds);
     }
     if (adjustment.type === "اذن مسائي") {
-      effectiveShiftEndSeconds -= Math.max(0, toSeconds - fromSeconds);
+      effectiveShiftEndSeconds = Math.min(effectiveShiftEndSeconds, fromSeconds);
     }
     if (adjustment.type === "إجازة نص يوم") {
       if (fromSeconds === shiftStartSeconds) {
@@ -108,6 +108,54 @@ export const computeAdjustmentEffects = ({
     halfDayExcused,
     firstStampSeconds,
     lastStampSeconds,
+  };
+};
+
+export const resolveShiftForDate = ({
+  employee,
+  dateStr,
+  rules,
+}: {
+  employee: Employee;
+  dateStr: string;
+  rules: SpecialRule[];
+}) => {
+  const normalizedEmployeeCode = String(employee.code ?? "").trim();
+  const activeRules = rules.filter((rule) => {
+    const ruleStart = new Date(rule.startDate);
+    const ruleEnd = new Date(rule.endDate);
+    const current = new Date(dateStr);
+    if (current < ruleStart || current > ruleEnd) return false;
+
+    if (rule.scope === "all") return true;
+    if (rule.scope.startsWith("dept:") && employee.department === rule.scope.replace("dept:", "")) return true;
+    if (rule.scope.startsWith("sector:") && employee.sector === rule.scope.replace("sector:", "")) return true;
+    if (rule.scope.startsWith("emp:")) {
+      const parsedScope = parseRuleScope(rule.scope);
+      const normalized = normalizeEmpCode(normalizedEmployeeCode);
+      return parsedScope.type === "emp" && parsedScope.values.includes(normalized);
+    }
+    return false;
+  }).sort((a, b) => (b.priority || 0) - (a.priority || 0));
+
+  const dayOfWeek = new Date(dateStr).getUTCDay();
+  let shiftStart = "09:00";
+  let shiftEnd = "17:00";
+
+  const shiftRule = activeRules.find((rule) => rule.ruleType === "custom_shift");
+  if (shiftRule) {
+    shiftStart = (shiftRule.params as any).shiftStart || shiftStart;
+    shiftEnd = (shiftRule.params as any).shiftEnd || shiftEnd;
+  } else if (dayOfWeek === 6) {
+    shiftStart = "10:00";
+    shiftEnd = "16:00";
+  }
+
+  return {
+    activeRules,
+    dayOfWeek,
+    shiftStart,
+    shiftEnd,
   };
 };
 
@@ -222,9 +270,109 @@ const parseEmployeeScope = (scope: string, employee: Employee, normalizedEmploye
   if (scope.startsWith("sector:")) return employee.sector === scope.replace("sector:", "");
   if (scope.startsWith("emp:")) {
     const parsedScope = parseRuleScope(scope);
-    return parsedScope.type === "emp" && parsedScope.values.some((value) => value === normalizedEmployeeCode);
+    const normalized = normalizeEmpCode(normalizedEmployeeCode);
+    return parsedScope.type === "emp" && parsedScope.values.some((value) => value === normalized);
   }
   return false;
+};
+
+
+
+export type ImportedEffect = {
+  employeeCode: string;
+  date: string;
+  from?: string;
+  to?: string;
+  type: string;
+  status?: string;
+  note?: string;
+};
+
+const normalizeEffectType = (type: string) => String(type || "").trim().replace("إذن", "اذن");
+
+const buildSyntheticAdjustment = (employeeCode: string, date: string, type: string, fromTime: string, toTime: string, note?: string): Adjustment => ({
+  id: -1,
+  employeeCode,
+  date,
+  type: type as any,
+  fromTime,
+  toTime,
+  source: "effects_store",
+  sourceFileName: null,
+  importedAt: new Date(),
+  note: note || null,
+} as Adjustment);
+
+export const applyEffectsToDailyRecord = ({
+  employeeCode,
+  dateStr,
+  dayAdjustments,
+  dayEffects,
+}: {
+  employeeCode: string;
+  dateStr: string;
+  dayAdjustments: Adjustment[];
+  dayEffects: ImportedEffect[];
+}) => {
+  const mergedAdjustments = [...dayAdjustments];
+  const notes: string[] = [];
+  const missionRanges: Array<{ from: string; to: string }> = [];
+
+  dayEffects.forEach((effect) => {
+    const type = normalizeEffectType(effect.type);
+    const from = (effect.from || "").trim();
+    const to = (effect.to || "").trim();
+
+    if (type === "مأمورية") {
+      if (from && to) missionRanges.push({ from, to });
+      else notes.push("مأمورية ناقص ساعات");
+      return;
+    }
+
+    if (type === "اذن صباحي" || type === "اذن مسائي") {
+      if (from && to) {
+        mergedAdjustments.push(buildSyntheticAdjustment(employeeCode, dateStr, type, from, to, effect.note));
+      } else {
+        notes.push(`${type} ناقص ساعات`);
+      }
+      return;
+    }
+
+    if (type === "إجازة نصف يوم" || type === "إجازة نص يوم") {
+      if (from && to) {
+        mergedAdjustments.push(buildSyntheticAdjustment(employeeCode, dateStr, "إجازة نص يوم", from, to, effect.note));
+      } else {
+        notes.push("إجازة نصف يوم ناقص ساعات");
+      }
+      return;
+    }
+
+    if (type === "إجازة بالخصم") {
+      mergedAdjustments.push(buildSyntheticAdjustment(employeeCode, dateStr, "إجازة بالخصم", "00:00:00", "00:00:00", effect.note));
+      return;
+    }
+
+    if (type === "غياب بعذر") {
+      mergedAdjustments.push(buildSyntheticAdjustment(employeeCode, dateStr, "غياب بعذر", "00:00:00", "00:00:00", effect.note));
+      return;
+    }
+
+    if (type === "إجازة من الرصيد") {
+      mergedAdjustments.push(buildSyntheticAdjustment(employeeCode, dateStr, "إجازة من الرصيد", "00:00:00", "00:00:00", effect.note));
+      return;
+    }
+
+    notes.push(`مؤثر غير معروف: ${effect.type}`);
+  });
+
+  if (missionRanges.length > 0) {
+    const missionStart = missionRanges.reduce((min, r) => timeStringToSeconds(r.from) < timeStringToSeconds(min) ? r.from : min, missionRanges[0].from);
+    const missionEnd = missionRanges.reduce((max, r) => timeStringToSeconds(r.to) > timeStringToSeconds(max) ? r.to : max, missionRanges[0].to);
+    if (missionRanges.length > 1) notes.push("تم دمج أكثر من مأمورية في أوسع نطاق");
+    mergedAdjustments.push(buildSyntheticAdjustment(employeeCode, dateStr, "مأمورية", missionStart, missionEnd));
+  }
+
+  return { mergedAdjustments, notes };
 };
 
 export type ProcessAttendanceParams = {
@@ -234,6 +382,7 @@ export type ProcessAttendanceParams = {
   leaves: Leave[];
   officialHolidays: OfficialHoliday[];
   adjustments: Adjustment[];
+  effects?: ImportedEffect[];
   startDate: string;
   endDate: string;
   timezoneOffsetMinutes?: number;
@@ -247,6 +396,7 @@ export const processAttendanceRecords = ({
   leaves,
   officialHolidays,
   adjustments,
+  effects = [],
   startDate,
   endDate,
   timezoneOffsetMinutes,
@@ -265,20 +415,23 @@ export const processAttendanceRecords = ({
     return `${year}-${month}-${day}`;
   };
 
+  const normalizeDateKey = (value?: string | null) => {
+    if (!value) return null;
+    const trimmed = String(value).trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed;
+    const parsed = new Date(trimmed);
+    if (Number.isNaN(parsed.getTime())) return null;
+    const year = parsed.getFullYear();
+    const month = String(parsed.getMonth() + 1).padStart(2, "0");
+    const day = String(parsed.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  };
+
   const [startYear, startMonth, startDay] = startDate.split("-").map(Number);
   const [endYear, endMonth, endDay] = endDate.split("-").map(Number);
 
   const searchStart = new Date(Date.UTC(startYear, startMonth - 1, startDay));
   const searchEnd = new Date(Date.UTC(endYear, endMonth - 1, endDay));
-
-  const scopeCache = new Map<string, ReturnType<typeof parseRuleScope>>();
-  const getParsedScope = (scope: string, cacheKey: string) => {
-    const cached = scopeCache.get(cacheKey);
-    if (cached) return cached;
-    const parsed = parseRuleScope(scope);
-    scopeCache.set(cacheKey, parsed);
-    return parsed;
-  };
 
   const adjustmentsByEmployeeDate = new Map<string, Adjustment[]>();
   adjustments.forEach((adjustment) => {
@@ -287,6 +440,14 @@ export const processAttendanceRecords = ({
     existing.push(adjustment);
     adjustmentsByEmployeeDate.set(key, existing);
   });
+  const effectsByEmpDate = new Map<string, ImportedEffect[]>();
+  effects.forEach((effect) => {
+    const key = `${effect.employeeCode}__${effect.date}`;
+    const existing = effectsByEmpDate.get(key) || [];
+    existing.push(effect);
+    effectsByEmpDate.set(key, existing);
+  });
+
 
   const records: AttendanceRecord[] = [];
   let recordId = 1;
@@ -426,40 +587,16 @@ export const processAttendanceRecords = ({
 
     for (let d = new Date(searchStart); d <= searchEnd; d.setUTCDate(d.getUTCDate() + 1)) {
       const dateStr = formatLocalDay(d);
+      const terminationDateKey = normalizeDateKey(employee.terminationDate || null);
+      const isTerminationPeriod = Boolean(terminationDateKey && dateStr > terminationDateKey);
       const holidayMatch = officialHolidays.find((holiday) => holiday.date === dateStr);
       const isOfficialHoliday = Boolean(holidayMatch);
 
-      const activeRules = rules.filter((rule) => {
-        const ruleStart = new Date(rule.startDate);
-        const ruleEnd = new Date(rule.endDate);
-        const current = new Date(dateStr);
-        if (current < ruleStart || current > ruleEnd) return false;
-
-        if (rule.scope === "all") return true;
-        if (rule.scope.startsWith("dept:") && employee.department === rule.scope.replace("dept:", "")) return true;
-        if (rule.scope.startsWith("sector:") && employee.sector === rule.scope.replace("sector:", "")) return true;
-        if (rule.scope.startsWith("emp:")) {
-          const cacheKey = `${rule.id ?? "no-id"}:${rule.scope}`;
-          const parsedScope = getParsedScope(rule.scope, cacheKey);
-          return parsedScope.type === "emp" && parsedScope.values.includes(normalizedEmployeeCode);
-        }
-        return false;
-      }).sort((a, b) => (b.priority || 0) - (a.priority || 0));
-
-      const dayOfWeek = d.getUTCDay();
-      const isSaturday = dayOfWeek === 6;
-      let currentShiftStart = "09:00";
-      let currentShiftEnd = "17:00";
-
-      const shiftRule = activeRules.find((rule) => rule.ruleType === "custom_shift");
-      if (shiftRule) {
-        currentShiftStart = (shiftRule.params as any).shiftStart || currentShiftStart;
-        currentShiftEnd = (shiftRule.params as any).shiftEnd || currentShiftEnd;
-      } else if (isSaturday) {
-        currentShiftStart = "10:00";
-        currentShiftEnd = "16:00";
-      }
-
+      const { activeRules, dayOfWeek, shiftStart: currentShiftStart, shiftEnd: currentShiftEnd } = resolveShiftForDate({
+        employee,
+        dateStr,
+        rules,
+      });
       const isFriday = dayOfWeek === 5;
       const leaveRule = activeRules.find((rule) => rule.ruleType === "attendance_exempt");
       const leaveTypeRaw = typeof (leaveRule?.params as any)?.leaveType === "string"
@@ -478,7 +615,20 @@ export const processAttendanceRecords = ({
       const isLeaveDay = Boolean(leaveRule || matchedLeaves.length > 0);
       const hasOvernightStay = activeRules.some((rule) => rule.ruleType === "overnight_stay");
 
-      const dayAdjustments = adjustmentsByEmployeeDate.get(`${employee.code}__${dateStr}`) || [];
+      const baseDayAdjustments = adjustmentsByEmployeeDate.get(`${employee.code}__${dateStr}`) || [];
+      const dayEffects = effectsByEmpDate.get(`${employee.code}__${dateStr}`) || [];
+      const { mergedAdjustments: dayAdjustments, notes: effectNotes } = applyEffectsToDailyRecord({
+        employeeCode: employee.code,
+        dateStr,
+        dayAdjustments: baseDayAdjustments,
+        dayEffects,
+      });
+      effectNotes.forEach((note) => addExtraNote(dateStr, note));
+      const leaveDeductionAdjustments = dayAdjustments.filter((adj) => adj.type === "إجازة بالخصم");
+      const excusedAbsenceAdjustments = dayAdjustments.filter((adj) => adj.type === "غياب بعذر");
+      const hasLeaveDeduction = leaveDeductionAdjustments.length > 0;
+      const hasLeaveFromBalance = dayAdjustments.some((adj) => adj.type === "إجازة من الرصيد");
+      const hasExcusedAbsence = excusedAbsenceAdjustments.length > 0;
 
       const consumedPunches = consumedPunchesByDate.get(dateStr);
       const dayPunches = filterConsumedPunches(punchesByDate.get(dateStr) || [], consumedPunches)
@@ -495,6 +645,41 @@ export const processAttendanceRecords = ({
         totalHours = (checkOutLocal.getTime() - checkInLocal.getTime()) / (1000 * 60 * 60);
       }
 
+      if (isTerminationPeriod) {
+        const extraNotes = extraNotesByKey.get(dateStr) || [];
+        records.push({
+          id: recordId++,
+          employeeCode: employee.code,
+          date: dateStr,
+          checkIn,
+          checkOut,
+          totalHours,
+          status: "Termination Period",
+          overtimeHours: 0,
+          penalties: [],
+          isOvernight: false,
+          notes: composeDailyNotes({
+            baseNotes: "فترة ترك",
+            extraNotes,
+            leaveNotes,
+            hasOvernightStay: false,
+          }),
+          missionStart: null,
+          missionEnd: null,
+          halfDayExcused: false,
+          isOfficialHoliday: false,
+          workedOnOfficialHoliday: null,
+          compDayCredit: 0,
+          leaveDeductionDays: 1,
+          excusedAbsenceDays: 0,
+          terminationPeriodDays: 1,
+          compDaysFriday: 0,
+          compDaysOfficial: 0,
+          compDaysTotal: 0,
+        } as AttendanceRecord);
+        continue;
+      }
+
       if (isOfficialHoliday) {
         const overrideKey = `${employee.code}__${dateStr}`;
         const override = workedOnOfficialHolidayOverrides?.get(overrideKey);
@@ -502,6 +687,7 @@ export const processAttendanceRecords = ({
         const autoWorked = Boolean(checkIn || checkOut) || totalHours > 0 || hasMission;
         const worked = override ?? autoWorked;
         const extraNotes = extraNotesByKey.get(dateStr) || [];
+        const compDaysOfficial = worked ? 1 : 0;
         records.push({
           id: recordId++,
           employeeCode: employee.code,
@@ -525,6 +711,12 @@ export const processAttendanceRecords = ({
           isOfficialHoliday: true,
           workedOnOfficialHoliday: override ?? null,
           compDayCredit: worked ? 1 : 0,
+          leaveDeductionDays: hasLeaveDeduction ? 1 : 0,
+          excusedAbsenceDays: hasExcusedAbsence ? 1 : 0,
+          terminationPeriodDays: 0,
+          compDaysFriday: 0,
+          compDaysOfficial,
+          compDaysTotal: compDaysOfficial,
         } as AttendanceRecord);
         continue;
       }
@@ -540,6 +732,7 @@ export const processAttendanceRecords = ({
           return (seconds >= windowAStart && seconds <= windowAEnd)
             || (seconds >= windowBStart && seconds <= windowBEnd);
         });
+        const hasMission = dayAdjustments.some((adj) => adj.type === "مأمورية");
         const nextDay = new Date(d);
         nextDay.setUTCDate(nextDay.getUTCDate() + 1);
         const nextDayShiftStartUTC = toUtcFromSeconds(nextDay, timeStringToSeconds(currentShiftStart));
@@ -550,6 +743,7 @@ export const processAttendanceRecords = ({
         void overtimeStart;
         void effectiveCheckOutDateTime;
         const extraNotes = extraNotesByKey.get(dateStr) || [];
+        const compDaysFriday = isFriday && (attendedFriday || hasMission) ? 1 : 0;
         records.push({
           id: recordId++,
           employeeCode: employee.code,
@@ -573,6 +767,12 @@ export const processAttendanceRecords = ({
           isOfficialHoliday: false,
           workedOnOfficialHoliday: null,
           compDayCredit: 0,
+          leaveDeductionDays: hasLeaveDeduction ? 1 : 0,
+          excusedAbsenceDays: hasExcusedAbsence ? 1 : 0,
+          terminationPeriodDays: 0,
+          compDaysFriday,
+          compDaysOfficial: 0,
+          compDaysTotal: compDaysFriday,
         } as AttendanceRecord);
         continue;
       }
@@ -629,7 +829,7 @@ export const processAttendanceRecords = ({
         const excusedByHalfDayNoPunch = halfDayExcused && !checkIn && !checkOut;
         const excusedByMission = hasMission;
         const excusedDay = excusedByHalfDayNoPunch || excusedByMission;
-        const isExcusedForPenalties = excusedDay || suppressPenalties || hasOvernightStay;
+        const isExcusedForPenalties = excusedDay || suppressPenalties || hasOvernightStay || hasLeaveDeduction || hasLeaveFromBalance || hasExcusedAbsence;
         let latePenaltyValue = 0;
         let lateMinutes = 0;
 
@@ -651,6 +851,15 @@ export const processAttendanceRecords = ({
         }
         if (hasOvernightStay) {
           status = "Present";
+        }
+        if (hasLeaveDeduction) {
+          status = "Leave Deduction";
+        }
+        if (hasLeaveFromBalance) {
+          status = "Leave";
+        }
+        if (hasExcusedAbsence && !checkIn && !checkOut) {
+          status = "Excused Absence";
         }
 
         const effectiveCheckOutForPenalties = hasOvernightStay ? null : checkOut;
@@ -713,6 +922,8 @@ export const processAttendanceRecords = ({
 
         const extraNotes = extraNotesByKey.get(dateStr) || [];
         const recordCheckOut = hasOvernightStay ? null : checkOut;
+        const compDaysFriday = 0;
+        const compDaysOfficial = 0;
         records.push({
           id: recordId++,
           employeeCode: employee.code,
@@ -736,9 +947,17 @@ export const processAttendanceRecords = ({
           isOfficialHoliday: false,
           workedOnOfficialHoliday: null,
           compDayCredit: 0,
+          leaveDeductionDays: hasLeaveDeduction ? 1 : 0,
+          excusedAbsenceDays: hasExcusedAbsence ? 1 : 0,
+          terminationPeriodDays: 0,
+          compDaysFriday,
+          compDaysOfficial,
+          compDaysTotal: compDaysFriday + compDaysOfficial,
         } as AttendanceRecord);
       } else {
         const extraNotes = extraNotesByKey.get(dateStr) || [];
+        const status = hasExcusedAbsence ? "Excused Absence" : hasLeaveDeduction ? "Leave Deduction" : hasLeaveFromBalance ? "Leave" : "Absent";
+        const penalties = hasExcusedAbsence || hasLeaveDeduction || hasLeaveFromBalance ? [] : [{ type: "غياب", value: 1 }];
         records.push({
           id: recordId++,
           employeeCode: employee.code,
@@ -746,8 +965,8 @@ export const processAttendanceRecords = ({
           checkIn: null,
           checkOut: null,
           totalHours: 0,
-          status: "Absent",
-          penalties: [{ type: "غياب", value: 1 }],
+          status,
+          penalties,
           overtimeHours: 0,
           isOvernight: false,
           notes: composeDailyNotes({
@@ -762,6 +981,12 @@ export const processAttendanceRecords = ({
           isOfficialHoliday: false,
           workedOnOfficialHoliday: null,
           compDayCredit: 0,
+          leaveDeductionDays: hasLeaveDeduction ? 1 : 0,
+          excusedAbsenceDays: hasExcusedAbsence ? 1 : 0,
+          terminationPeriodDays: 0,
+          compDaysFriday: 0,
+          compDaysOfficial: 0,
+          compDaysTotal: 0,
         } as AttendanceRecord);
       }
     }

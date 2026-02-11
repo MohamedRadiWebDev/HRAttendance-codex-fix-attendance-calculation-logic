@@ -172,9 +172,10 @@ function AddAdjustmentDialog() {
       toast({ title: "خطأ", description: "يرجى إدخال تاريخ صحيح بصيغة dd/mm/yyyy", variant: "destructive" });
       return;
     }
-    const fromTime = normalizeTime(data.fromTime);
-    const toTime = normalizeTime(data.toTime);
-    if (timeToSeconds(fromTime) >= timeToSeconds(toTime)) {
+    const isDeductionLeave = data.type === "إجازة بالخصم" || data.type === "غياب بعذر";
+    const fromTime = isDeductionLeave ? "00:00:00" : normalizeTime(data.fromTime);
+    const toTime = isDeductionLeave ? "23:59:59" : normalizeTime(data.toTime);
+    if (!isDeductionLeave && timeToSeconds(fromTime) >= timeToSeconds(toTime)) {
       toast({ title: "خطأ", description: "وقت البداية يجب أن يكون قبل النهاية", variant: "destructive" });
       return;
     }
@@ -306,6 +307,8 @@ function AddAdjustmentDialog() {
                       <SelectItem value="اذن مسائي">اذن مسائي</SelectItem>
                       <SelectItem value="إجازة نص يوم">إجازة نص يوم</SelectItem>
                       <SelectItem value="مأمورية">مأمورية</SelectItem>
+                      <SelectItem value="إجازة بالخصم">إجازة بالخصم</SelectItem>
+                      <SelectItem value="غياب بعذر">غياب بعذر</SelectItem>
                     </SelectContent>
                   </Select>
                   <FormMessage />
