@@ -4,10 +4,6 @@ import { parseTimeToSeconds } from "@/lib/datetime";
 
 const dayNames = ["أحد", "اثنين", "ثلاثاء", "أربعاء", "خميس", "جمعة", "سبت"];
 
-const toExcelTime = (value: Date) => {
-  const seconds = value.getHours() * 3600 + value.getMinutes() * 60 + value.getSeconds();
-  return seconds / 86400;
-};
 
 const toExcelDateSerial = (value: string) => {
   const [yearRaw, monthRaw, dayRaw] = value.split("-").map(Number);

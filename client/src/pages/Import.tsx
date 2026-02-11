@@ -76,7 +76,6 @@ export default function Import() {
         const ws = wb.Sheets[wsname];
         const data = XLSX.utils.sheet_to_json(ws);
         
-        console.log("Excel Preview Data:", data[0]); // Debug first row
         
         if (data.length === 0) {
           toast({ title: "تنبيه", description: "الملف فارغ", variant: "destructive" });
