@@ -205,12 +205,27 @@ export default function Attendance() {
 
   const handleExport = () => {
     if (!records || records.length === 0) return;
-    const { detailHeaders, detailRows, summaryRows } = buildAttendanceExportRows({
+    const { detailHeaders, detailRows, summaryHeaders, summaryRows } = buildAttendanceExportRows({
       records,
       employees: employees || [],
     });
 
-    const workbook = XLSX.utils.book_new();
+    const hasValidHeaders = Array.isArray(detailHeaders)
+      && detailHeaders.length > 0
+      && Array.isArray(summaryHeaders)
+      && summaryHeaders.length > 0;
+
+    if (!hasValidHeaders) {
+      toast({
+        title: "تعذر تصدير التقرير",
+        description: "لا يمكن إنشاء ملف التصدير لأن عناوين الأعمدة غير مكتملة.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      const workbook = XLSX.utils.book_new();
     const detailSheet = XLSX.utils.aoa_to_sheet(detailRows);
     const summarySheet = XLSX.utils.aoa_to_sheet(summaryRows);
     const applyHeaderStyle = (sheet: XLSX.WorkSheet, headerCount: number) => {
@@ -358,10 +373,17 @@ export default function Attendance() {
       }
     }
 
-    XLSX.utils.book_append_sheet(workbook, detailSheet, "تفصيلي");
-    XLSX.utils.book_append_sheet(workbook, summarySheet, "ملخص");
-    XLSX.writeFile(workbook, `Attendance_${dateRange.start}_${dateRange.end}.xlsx`);
-    toast({ title: "تم التصدير", description: "تم تحميل ملف الإكسل بنجاح" });
+      XLSX.utils.book_append_sheet(workbook, detailSheet, "تفصيلي");
+      XLSX.utils.book_append_sheet(workbook, summarySheet, "ملخص");
+      XLSX.writeFile(workbook, `Attendance_${dateRange.start}_${dateRange.end}.xlsx`);
+      toast({ title: "تم التصدير", description: "تم تحميل ملف الإكسل بنجاح" });
+    } catch {
+      toast({
+        title: "تعذر تصدير التقرير",
+        description: "حدث خطأ أثناء إنشاء ملف التقرير. حاول مرة أخرى.",
+        variant: "destructive",
+      });
+    }
   };
 
   return (
