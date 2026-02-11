@@ -20,6 +20,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import * as XLSX from 'xlsx';
 import { buildAttendanceExportRows } from "@/exporters/attendanceExport";
 import { useAttendanceStore } from "@/store/attendanceStore";
+import { useEffectsStore } from "@/store/effectsStore";
 import { resolveShiftForDate, timeStringToSeconds } from "@/engine/attendanceEngine";
 
 export default function Attendance() {
@@ -39,10 +40,13 @@ export default function Attendance() {
   const { data: employees } = useEmployees();
   const punches = useAttendanceStore((state) => state.punches);
   const rules = useAttendanceStore((state) => state.rules);
+  const effects = useEffectsStore((state) => state.effects);
   const processAttendance = useProcessAttendance();
   const updateAttendanceRecord = useUpdateAttendanceRecord();
   const { toast } = useToast();
   const [timelineRecord, setTimelineRecord] = useState<any | null>(null);
+  const [effectsRecord, setEffectsRecord] = useState<any | null>(null);
+  const [showEffectsDebug, setShowEffectsDebug] = useState(false);
 
   const parseDateInput = (value: string) => {
     if (!value) return null;
@@ -128,6 +132,23 @@ export default function Attendance() {
     });
     return map;
   }, [adjustments]);
+
+
+  const effectsByKey = useMemo(() => {
+    const map = new Map<string, any[]>();
+    (effects || []).forEach((effect: any) => {
+      const key = `${effect.employeeCode}__${effect.date}`;
+      const list = map.get(key) || [];
+      list.push(effect);
+      map.set(key, list);
+    });
+    return map;
+  }, [effects]);
+
+  const effectsInPeriod = useMemo(() => {
+    if (!dateRange.start || !dateRange.end) return 0;
+    return (effects || []).filter((e: any) => e.date >= dateRange.start && e.date <= dateRange.end).length;
+  }, [effects, dateRange.start, dateRange.end]);
 
   const employeesByCode = useMemo(() => {
     return new Map((employees || []).map((employee) => [employee.code, employee]));
@@ -434,6 +455,20 @@ export default function Attendance() {
               </div>
             </div>
 
+            <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50/40 p-3 text-xs text-slate-700">
+              <div className="flex items-center justify-between">
+                <span className="font-semibold">تشخيص المؤثرات</span>
+                <Button variant="ghost" size="sm" onClick={() => setShowEffectsDebug((v) => !v)}>{showEffectsDebug ? "إخفاء" : "إظهار"}</Button>
+              </div>
+              {showEffectsDebug && (
+                <div className="space-y-1 mt-2">
+                  <div>Effects loaded: <strong>{effects.length}</strong></div>
+                  <div>Effects matched to this period: <strong>{effectsInPeriod}</strong></div>
+                  <div>Sample match: <strong>{records?.[0] ? `${records[0].employeeCode}/${records[0].date} -> ${(effectsByKey.get(`${records[0].employeeCode}__${records[0].date}`) || []).length}` : "-"}</strong></div>
+                </div>
+              )}
+            </div>
+
             <div className="flex-1 overflow-auto">
               <table className="w-full text-sm text-right min-w-[1100px] hidden md:table">
                 <thead className="bg-slate-50 text-muted-foreground font-medium sticky top-0 z-10 shadow-sm">
@@ -446,19 +481,20 @@ export default function Attendance() {
                     <th className="px-6 py-4">الإضافي</th>
                     <th className="px-6 py-4">الحالة</th>
                     <th className="px-6 py-4">الإجازة الرسمية</th>
+                    <th className="px-6 py-4">المؤثرات</th>
                     <th className="px-6 py-4">ملاحظات</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border/50">
                   {isLoading ? (
-                    <tr><td colSpan={9} className="px-6 py-8 text-center">جاري تحميل البيانات...</td></tr>
+                    <tr><td colSpan={10} className="px-6 py-8 text-center">جاري تحميل البيانات...</td></tr>
                   ) : !dateRange.start || !dateRange.end ? (
-                    <tr><td colSpan={9} className="px-6 py-8 text-center text-muted-foreground">يرجى تحديد الفترة أولاً.</td></tr>
+                    <tr><td colSpan={10} className="px-6 py-8 text-center text-muted-foreground">يرجى تحديد الفترة أولاً.</td></tr>
                   ) : filteredRecords?.length === 0 ? (
-                    <tr><td colSpan={9} className="px-6 py-8 text-center text-muted-foreground">لا توجد سجلات في هذه الفترة. جرّب معالجة الحضور بعد استيراد البصمة.</td></tr>
+                    <tr><td colSpan={10} className="px-6 py-8 text-center text-muted-foreground">لا توجد سجلات في هذه الفترة. جرّب معالجة الحضور بعد استيراد البصمة.</td></tr>
                   ) : (
                     filteredRecords?.map((record: any) => (
-                      <tr key={record.id} className="hover:bg-slate-50/50 transition-colors">
+                      <tr key={record.id} className="hover:bg-slate-50/50 transition-colors cursor-pointer" onClick={() => setEffectsRecord(record)}>
                         <td className="px-6 py-4 font-mono text-muted-foreground">{record.date}</td>
                         <td className="px-6 py-4 font-medium">{record.employeeCode}</td>
                         <td className="px-6 py-4 font-mono" dir="ltr">
@@ -506,6 +542,18 @@ export default function Attendance() {
                           ) : (
                             <span className="text-xs text-muted-foreground">-</span>
                           )}
+                        </td>
+                        <td className="px-6 py-4">
+                          <div className="flex flex-wrap gap-1">
+                            {(effectsByKey.get(`${record.employeeCode}__${record.date}`) || []).map((effect: any, i: number) => (
+                              <span key={i} className="px-2 py-0.5 rounded bg-indigo-100 text-indigo-700 text-[10px] font-bold">
+                                {effect.type}
+                              </span>
+                            ))}
+                            {!(effectsByKey.get(`${record.employeeCode}__${record.date}`) || []).length && (
+                              <span className="text-xs text-muted-foreground">-</span>
+                            )}
+                          </div>
                         </td>
                         <td className="px-6 py-4">
                           <div className="flex flex-col gap-1">
@@ -580,6 +628,11 @@ export default function Attendance() {
                         عرض الخط الزمني
                       </Button>
                       <div className="font-semibold">{record.employeeCode}</div>
+                      <div className="flex flex-wrap gap-1">
+                        {(effectsByKey.get(`${record.employeeCode}__${record.date}`) || []).map((effect: any, i: number) => (
+                          <span key={i} className="px-2 py-0.5 rounded bg-indigo-100 text-indigo-700 text-[10px] font-bold">{effect.type}</span>
+                        ))}
+                      </div>
                       <div className="flex justify-between text-sm">
                         <span>الدخول</span>
                         <span dir="ltr">{record.checkIn ? format(new Date(record.checkIn), "HH:mm") : "-"}</span>
@@ -642,6 +695,36 @@ export default function Attendance() {
               </div>
             )}
           </div>
+
+          <Sheet open={Boolean(effectsRecord)} onOpenChange={(open) => !open && setEffectsRecord(null)}>
+            <SheetContent side="left" className="w-full sm:max-w-lg" dir="rtl">
+              <SheetHeader>
+                <SheetTitle>تفاصيل المؤثرات</SheetTitle>
+              </SheetHeader>
+              {effectsRecord && (
+                <div className="mt-4 space-y-3 text-sm">
+                  <div className="font-semibold">{effectsRecord.employeeCode} - {effectsRecord.date}</div>
+                  {(effectsByKey.get(`${effectsRecord.employeeCode}__${effectsRecord.date}`) || []).length === 0 ? (
+                    <p className="text-muted-foreground">لا توجد مؤثرات محفوظة لهذا اليوم.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {(effectsByKey.get(`${effectsRecord.employeeCode}__${effectsRecord.date}`) || []).map((effect: any) => {
+                        const missingHours = (["اذن صباحي", "اذن مسائي", "إذن صباحي", "إذن مسائي", "إجازة نصف يوم", "إجازة نص يوم"].includes(effect.type)) && (!effect.from || !effect.to);
+                        return (
+                          <div key={effect.id} className="rounded-lg border p-2">
+                            <div className="font-medium">{effect.type}</div>
+                            <div className="text-xs text-muted-foreground">{effect.from || "-"} → {effect.to || "-"}</div>
+                            {missingHours && <div className="text-xs text-amber-600">ناقص ساعات</div>}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+            </SheetContent>
+          </Sheet>
+
           <TimelineSheet
             record={timelineRecord}
             employee={timelineRecord ? employeesByCode.get(timelineRecord.employeeCode) : null}

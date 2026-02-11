@@ -14,6 +14,7 @@ import type {
   SpecialRule,
 } from "@shared/schema";
 import { processAttendanceRecords } from "@/engine/attendanceEngine";
+import { useEffectsStore } from "@/store/effectsStore";
 import {
   clearPersistedState,
   deserializeAttendanceRecords,
@@ -425,6 +426,7 @@ export const AttendanceStoreProvider = ({ children }: { children: React.ReactNod
         if (record.workedOnOfficialHoliday === null || record.workedOnOfficialHoliday === undefined) return;
         overrideMap.set(`${record.employeeCode}__${record.date}`, record.workedOnOfficialHoliday);
       });
+      const effects = useEffectsStore.getState().effects;
       const records = processAttendanceRecords({
         employees: current.employees,
         punches: current.punches,
@@ -432,6 +434,7 @@ export const AttendanceStoreProvider = ({ children }: { children: React.ReactNod
         leaves: current.leaves,
         officialHolidays: current.officialHolidays,
         adjustments: current.adjustments,
+        effects,
         startDate,
         endDate,
         timezoneOffsetMinutes,

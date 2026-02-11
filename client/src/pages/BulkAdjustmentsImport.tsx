@@ -409,6 +409,19 @@ export default function BulkAdjustmentsImport() {
                 <Button variant="ghost" onClick={clearEffects}>مسح المؤثرات المحفوظة</Button>
               </div>
             </div>
+
+            <div className="rounded-2xl border bg-white p-5 space-y-4">
+              <div className="flex flex-wrap items-center gap-3 text-sm">
+                <div>صالحة: <Badge variant="secondary">{validRows.length}</Badge></div>
+                <div>غير صالحة: <Badge variant="destructive">{invalidRows.length}</Badge></div>
+              </div>
+              <div className="flex flex-wrap gap-3">
+                <Button onClick={saveEffectsReplace}>حفظ (استبدال)</Button>
+                <Button variant="secondary" onClick={saveEffectsAppend}>حفظ (إضافة)</Button>
+                <Button variant="outline" onClick={applySavedEffects}>تطبيق المؤثرات المحفوظة</Button>
+                <Button variant="ghost" onClick={clearEffects}>مسح المؤثرات المحفوظة</Button>
+              </div>
+            </div>
           </div>
         </div>
       </main>

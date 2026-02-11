@@ -276,6 +276,105 @@ const parseEmployeeScope = (scope: string, employee: Employee, normalizedEmploye
   return false;
 };
 
+
+
+export type ImportedEffect = {
+  employeeCode: string;
+  date: string;
+  from?: string;
+  to?: string;
+  type: string;
+  status?: string;
+  note?: string;
+};
+
+const normalizeEffectType = (type: string) => String(type || "").trim().replace("إذن", "اذن");
+
+const buildSyntheticAdjustment = (employeeCode: string, date: string, type: string, fromTime: string, toTime: string, note?: string): Adjustment => ({
+  id: -1,
+  employeeCode,
+  date,
+  type: type as any,
+  fromTime,
+  toTime,
+  source: "effects_store",
+  sourceFileName: null,
+  importedAt: new Date(),
+  note: note || null,
+} as Adjustment);
+
+export const applyEffectsToDailyRecord = ({
+  employeeCode,
+  dateStr,
+  dayAdjustments,
+  dayEffects,
+}: {
+  employeeCode: string;
+  dateStr: string;
+  dayAdjustments: Adjustment[];
+  dayEffects: ImportedEffect[];
+}) => {
+  const mergedAdjustments = [...dayAdjustments];
+  const notes: string[] = [];
+  const missionRanges: Array<{ from: string; to: string }> = [];
+
+  dayEffects.forEach((effect) => {
+    const type = normalizeEffectType(effect.type);
+    const from = (effect.from || "").trim();
+    const to = (effect.to || "").trim();
+
+    if (type === "مأمورية") {
+      if (from && to) missionRanges.push({ from, to });
+      else notes.push("مأمورية ناقص ساعات");
+      return;
+    }
+
+    if (type === "اذن صباحي" || type === "اذن مسائي") {
+      if (from && to) {
+        mergedAdjustments.push(buildSyntheticAdjustment(employeeCode, dateStr, type, from, to, effect.note));
+      } else {
+        notes.push(`${type} ناقص ساعات`);
+      }
+      return;
+    }
+
+    if (type === "إجازة نصف يوم" || type === "إجازة نص يوم") {
+      if (from && to) {
+        mergedAdjustments.push(buildSyntheticAdjustment(employeeCode, dateStr, "إجازة نص يوم", from, to, effect.note));
+      } else {
+        notes.push("إجازة نصف يوم ناقص ساعات");
+      }
+      return;
+    }
+
+    if (type === "إجازة بالخصم") {
+      mergedAdjustments.push(buildSyntheticAdjustment(employeeCode, dateStr, "إجازة بالخصم", "00:00:00", "00:00:00", effect.note));
+      return;
+    }
+
+    if (type === "غياب بعذر") {
+      mergedAdjustments.push(buildSyntheticAdjustment(employeeCode, dateStr, "غياب بعذر", "00:00:00", "00:00:00", effect.note));
+      return;
+    }
+
+    if (type === "إجازة من الرصيد") {
+      mergedAdjustments.push(buildSyntheticAdjustment(employeeCode, dateStr, "إجازة من الرصيد", "00:00:00", "00:00:00", effect.note));
+      return;
+    }
+
+    notes.push(`مؤثر غير معروف: ${effect.type}`);
+  });
+
+  if (missionRanges.length > 0) {
+    const missionStart = missionRanges.reduce((min, r) => timeStringToSeconds(r.from) < timeStringToSeconds(min) ? r.from : min, missionRanges[0].from);
+    const missionEnd = missionRanges.reduce((max, r) => timeStringToSeconds(r.to) > timeStringToSeconds(max) ? r.to : max, missionRanges[0].to);
+    if (missionRanges.length > 1) notes.push("تم دمج أكثر من مأمورية في أوسع نطاق");
+    mergedAdjustments.push(buildSyntheticAdjustment(employeeCode, dateStr, "مأمورية", missionStart, missionEnd));
+  }
+
+  return { mergedAdjustments, notes };
+};
+
 export type ProcessAttendanceParams = {
   employees: Employee[];
   punches: BiometricPunch[];
@@ -283,6 +382,7 @@ export type ProcessAttendanceParams = {
   leaves: Leave[];
   officialHolidays: OfficialHoliday[];
   adjustments: Adjustment[];
+  effects?: ImportedEffect[];
   startDate: string;
   endDate: string;
   timezoneOffsetMinutes?: number;
@@ -296,6 +396,7 @@ export const processAttendanceRecords = ({
   leaves,
   officialHolidays,
   adjustments,
+  effects = [],
   startDate,
   endDate,
   timezoneOffsetMinutes,
@@ -339,6 +440,14 @@ export const processAttendanceRecords = ({
     existing.push(adjustment);
     adjustmentsByEmployeeDate.set(key, existing);
   });
+  const effectsByEmpDate = new Map<string, ImportedEffect[]>();
+  effects.forEach((effect) => {
+    const key = `${effect.employeeCode}__${effect.date}`;
+    const existing = effectsByEmpDate.get(key) || [];
+    existing.push(effect);
+    effectsByEmpDate.set(key, existing);
+  });
+
 
   const records: AttendanceRecord[] = [];
   let recordId = 1;
@@ -506,7 +615,15 @@ export const processAttendanceRecords = ({
       const isLeaveDay = Boolean(leaveRule || matchedLeaves.length > 0);
       const hasOvernightStay = activeRules.some((rule) => rule.ruleType === "overnight_stay");
 
-      const dayAdjustments = adjustmentsByEmployeeDate.get(`${employee.code}__${dateStr}`) || [];
+      const baseDayAdjustments = adjustmentsByEmployeeDate.get(`${employee.code}__${dateStr}`) || [];
+      const dayEffects = effectsByEmpDate.get(`${employee.code}__${dateStr}`) || [];
+      const { mergedAdjustments: dayAdjustments, notes: effectNotes } = applyEffectsToDailyRecord({
+        employeeCode: employee.code,
+        dateStr,
+        dayAdjustments: baseDayAdjustments,
+        dayEffects,
+      });
+      effectNotes.forEach((note) => addExtraNote(dateStr, note));
       const leaveDeductionAdjustments = dayAdjustments.filter((adj) => adj.type === "إجازة بالخصم");
       const excusedAbsenceAdjustments = dayAdjustments.filter((adj) => adj.type === "غياب بعذر");
       const hasLeaveDeduction = leaveDeductionAdjustments.length > 0;
