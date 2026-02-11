@@ -324,6 +324,21 @@ export default function BulkAdjustmentsImport() {
     XLSX.writeFile(wb, "effects-template.xlsx");
   };
 
+  const exportTemplate = () => {
+    const wb = XLSX.utils.book_new();
+    const data = [
+      EFFECT_HEADERS,
+      ["648", "أحمد علي", "2025-01-05", "09:00:00", "11:00:00", "إذن صباحي", "موافق", "نموذج إذن"],
+      ["648", "أحمد علي", "2025-01-06", "", "", "إجازة نصف يوم", "موافق", "يتم الاستدلال تلقائياً"],
+      ["701", "منى سالم", "2025-01-10", "10:00:00", "14:00:00", "مأمورية", "موافق", "مأمورية خارجية"],
+      ["701", "منى سالم", "2025-01-12", "", "", "إجازة بالخصم", "موافق", ""],
+      ["702", "عمرو محمد", "2025-01-15", "", "", "إجازة رسمية", "نشط", "تعويض يوم عمل"],
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(data);
+    XLSX.utils.book_append_sheet(wb, ws, "Effects");
+    XLSX.writeFile(wb, "effects-template.xlsx");
+  };
+
   const summaryCounts = useMemo(() => {
     return validationRows.reduce<Record<AdjustmentStatus, number>>((acc, row) => {
       acc[row.status] = (acc[row.status] || 0) + 1;
@@ -375,26 +390,40 @@ export default function BulkAdjustmentsImport() {
                     </tr>
                   </thead>
                   <tbody>
-                    {validationRows.map((row) => (
-                      <tr key={`${row.rowIndex}-${row.employeeCode}-${row.date}`} className="border-t border-border/30">
-                        <td className="py-1 px-3">{row.rowIndex}</td>
-                        <td className="py-1 px-3">{row.employeeCode}</td>
-                        <td className="py-1 px-3">{row.date || "-"}</td>
-                        <td className="py-1 px-3">{row.type}</td>
-                        <td className="py-1 px-3">{row.fromTime || "-"}</td>
-                        <td className="py-1 px-3">{row.toTime || "-"}</td>
-                        <td className="py-1 px-3"><Badge variant={row.state === "Invalid" ? "destructive" : "secondary"}>{row.state}</Badge></td>
-                        <td className="py-1 px-3 text-red-600">{row.reason || "-"}</td>
-                      </tr>
-                    ))}
-                    {validationRows.length === 0 && (
+                    {validationRows.length === 0 ? (
                       <tr>
                         <td colSpan={8} className="py-6 text-center text-muted-foreground">قم برفع ملف المؤثرات للمعاينة.</td>
                       </tr>
-                    ))}
+                    ) : (
+                      validationRows.map((row) => (
+                        <tr key={`${row.rowIndex}-${row.employeeCode}-${row.date}`} className="border-t border-border/30">
+                          <td className="py-1 px-3">{row.rowIndex}</td>
+                          <td className="py-1 px-3">{row.employeeCode}</td>
+                          <td className="py-1 px-3">{row.date || "-"}</td>
+                          <td className="py-1 px-3">{row.type}</td>
+                          <td className="py-1 px-3">{row.fromTime || "-"}</td>
+                          <td className="py-1 px-3">{row.toTime || "-"}</td>
+                          <td className="py-1 px-3"><Badge variant={row.state === "Invalid" ? "destructive" : "secondary"}>{row.state}</Badge></td>
+                          <td className="py-1 px-3 text-red-600">{row.reason || "-"}</td>
+                        </tr>
+                      ))
+                    )}
                   </tbody>
                 </table>
               )}
+            </div>
+
+            <div className="rounded-2xl border bg-white p-5 space-y-4">
+              <div className="flex flex-wrap items-center gap-3 text-sm">
+                <div>صالحة: <Badge variant="secondary">{validRows.length}</Badge></div>
+                <div>غير صالحة: <Badge variant="destructive">{invalidRows.length}</Badge></div>
+              </div>
+              <div className="flex flex-wrap gap-3">
+                <Button onClick={saveEffectsReplace}>حفظ (استبدال)</Button>
+                <Button variant="secondary" onClick={saveEffectsAppend}>حفظ (إضافة)</Button>
+                <Button variant="outline" onClick={applySavedEffects}>تطبيق المؤثرات المحفوظة</Button>
+                <Button variant="ghost" onClick={clearEffects}>مسح المؤثرات المحفوظة</Button>
+              </div>
             </div>
 
             <div className="rounded-2xl border bg-white p-5 space-y-4">
