@@ -324,34 +324,6 @@ export default function BulkAdjustmentsImport() {
     XLSX.writeFile(wb, "effects-template.xlsx");
   };
 
-  const exportTemplate = () => {
-    const wb = XLSX.utils.book_new();
-    const data = [
-      EFFECT_HEADERS,
-      ["648", "أحمد علي", "2025-01-05", "09:00:00", "11:00:00", "إذن صباحي", "موافق", "نموذج إذن"],
-      ["648", "أحمد علي", "2025-01-06", "", "", "إجازة نصف يوم", "موافق", "يتم الاستدلال تلقائياً"],
-      ["701", "منى سالم", "2025-01-10", "10:00:00", "14:00:00", "مأمورية", "موافق", "مأمورية خارجية"],
-      ["701", "منى سالم", "2025-01-12", "", "", "إجازة بالخصم", "موافق", ""],
-      ["702", "عمرو محمد", "2025-01-15", "", "", "إجازة رسمية", "نشط", "تعويض يوم عمل"],
-    ];
-    const ws = XLSX.utils.aoa_to_sheet(data);
-    XLSX.utils.book_append_sheet(wb, ws, "Effects");
-    XLSX.writeFile(wb, "effects-template.xlsx");
-  };
-
-  const summaryCounts = useMemo(() => {
-    return validationRows.reduce<Record<AdjustmentStatus, number>>((acc, row) => {
-      acc[row.status] = (acc[row.status] || 0) + 1;
-      return acc;
-    }, {
-      Valid: 0,
-      "Auto-filled": 0,
-      "Auto-inferred": 0,
-      "Needs Review": 0,
-      Invalid: 0,
-    });
-  }, [validationRows]);
-
   return (
     <div className="min-h-screen bg-slate-50" dir="rtl">
       <Sidebar />
@@ -369,7 +341,6 @@ export default function BulkAdjustmentsImport() {
               </div>
               <p className="text-sm text-muted-foreground">الأعمدة المطلوبة: {EFFECT_HEADERS.join(" | ")}</p>
             </div>
-          </div>
 
             <div className="rounded-2xl border bg-white overflow-hidden">
               <div className="p-4 border-b bg-slate-50/50">
@@ -410,32 +381,6 @@ export default function BulkAdjustmentsImport() {
                     )}
                   </tbody>
                 </table>
-              )}
-            </div>
-
-            <div className="rounded-2xl border bg-white p-5 space-y-4">
-              <div className="flex flex-wrap items-center gap-3 text-sm">
-                <div>صالحة: <Badge variant="secondary">{validRows.length}</Badge></div>
-                <div>غير صالحة: <Badge variant="destructive">{invalidRows.length}</Badge></div>
-              </div>
-              <div className="flex flex-wrap gap-3">
-                <Button onClick={saveEffectsReplace}>حفظ (استبدال)</Button>
-                <Button variant="secondary" onClick={saveEffectsAppend}>حفظ (إضافة)</Button>
-                <Button variant="outline" onClick={applySavedEffects}>تطبيق المؤثرات المحفوظة</Button>
-                <Button variant="ghost" onClick={clearEffects}>مسح المؤثرات المحفوظة</Button>
-              </div>
-            </div>
-
-            <div className="rounded-2xl border bg-white p-5 space-y-4">
-              <div className="flex flex-wrap items-center gap-3 text-sm">
-                <div>صالحة: <Badge variant="secondary">{validRows.length}</Badge></div>
-                <div>غير صالحة: <Badge variant="destructive">{invalidRows.length}</Badge></div>
-              </div>
-              <div className="flex flex-wrap gap-3">
-                <Button onClick={saveEffectsReplace}>حفظ (استبدال)</Button>
-                <Button variant="secondary" onClick={saveEffectsAppend}>حفظ (إضافة)</Button>
-                <Button variant="outline" onClick={applySavedEffects}>تطبيق المؤثرات المحفوظة</Button>
-                <Button variant="ghost" onClick={clearEffects}>مسح المؤثرات المحفوظة</Button>
               </div>
             </div>
 
@@ -452,8 +397,8 @@ export default function BulkAdjustmentsImport() {
               </div>
             </div>
           </div>
-        </div>
-      </main>
+        </main>
+      </div>
     </div>
   );
 }
