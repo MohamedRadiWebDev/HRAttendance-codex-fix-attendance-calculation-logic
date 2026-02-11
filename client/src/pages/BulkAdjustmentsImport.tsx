@@ -782,9 +782,9 @@ export default function BulkAdjustmentsImport() {
                             <span className="text-red-600">{row.reason}</span>
                           </li>
                         ))}
-                      </ul>
-                    )}
-                  </div>
+                      </tbody>
+                    </table>
+                  )}
                 </div>
               </div>
             </div>
