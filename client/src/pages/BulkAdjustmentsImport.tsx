@@ -300,6 +300,44 @@ export default function BulkAdjustmentsImport() {
     XLSX.writeFile(wb, "effects-template.xlsx");
   };
 
+  const updateReviewSide = (rowIndex: number, side: "صباح" | "مساء", applyToAll: boolean) => {
+    setValidationRows((prev) => {
+      return prev.map((row) => {
+        if (!row.needsReview) return row;
+        const shouldUpdate = applyToAll ? row.needsReview : row.rowIndex === rowIndex;
+        if (!shouldUpdate || !row.shiftStart || !row.shiftEnd) return row;
+        const range = buildRangeFromShift({
+          shiftStart: row.shiftStart,
+          shiftEnd: row.shiftEnd,
+          durationMinutes: config.defaultHalfDayMinutes || 240,
+          side,
+        });
+        return {
+          ...row,
+          fromTime: range.fromTime,
+          toTime: range.toTime,
+          status: "Auto-filled",
+          inferredSide: side,
+          reason: undefined,
+          needsReview: false,
+        };
+      });
+    });
+  };
+
+  const summaryCounts = useMemo(() => {
+    return validationRows.reduce<Record<AdjustmentStatus, number>>((acc, row) => {
+      acc[row.status] = (acc[row.status] || 0) + 1;
+      return acc;
+    }, {
+      Valid: 0,
+      "Auto-filled": 0,
+      "Auto-inferred": 0,
+      "Needs Review": 0,
+      Invalid: 0,
+    });
+  }, [validationRows]);
+
   return (
     <div className="min-h-screen bg-slate-50" dir="rtl">
       <Sidebar />
