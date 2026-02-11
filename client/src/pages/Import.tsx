@@ -9,6 +9,7 @@ import { useImportEmployees, useImportPunches } from "@/hooks/use-employees";
 import { useProcessAttendance } from "@/hooks/use-attendance";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { format, parse, parseISO, isValid } from "date-fns";
+import { normalizeEmployeeCode } from "@shared/employee-code";
 import {
   buildEmployeesTemplate,
   buildLeavesTemplate,
@@ -98,7 +99,7 @@ export default function Import() {
     try {
       if (activeTab === "employees") {
         const mapped = previewData.map((row: any) => ({
-          code: String(row['كود'] || row['Code'] || row['ID'] || ""),
+          code: normalizeEmployeeCode(row['كود'] || row['Code'] || row['ID'] || ""),
           nameAr: String(row['الاسم'] || row['Name'] || ""),
           sector: String(row['القطاع'] || row['Sector'] || ""),
           department: String(row['الادارة'] || row['Department'] || ""),
@@ -133,11 +134,11 @@ export default function Import() {
           });
 
           // Try to find employee code
-          const employeeCode = String(
+          const employeeCode = normalizeEmployeeCode(
             row['كود'] || row['ID'] || row['Code'] || row['الكود'] || 
             normalizedRow['كود'] || normalizedRow['الكود'] || 
             row['id'] || row['Employee ID'] || ""
-          ).trim();
+          );
           
           // Try to find date/time
           const rawDate = 
@@ -151,7 +152,7 @@ export default function Import() {
           
           return {
             employeeCode,
-            punchDatetime: punchDatetime ? format(punchDatetime, "yyyy-MM-dd'T'HH:mm:ssXXX") : "",
+            punchDatetime: punchDatetime ? format(punchDatetime, "yyyy-MM-dd'T'HH:mm:ss") : "",
           };
         }).filter(p => p.employeeCode && p.punchDatetime);
 
@@ -175,6 +176,7 @@ export default function Import() {
           await processAttendance.mutateAsync({
             startDate: startRange,
             endDate: endRange,
+            employeeCodes: Array.from(new Set(mapped.map((row) => row.employeeCode))),
           });
         }
       }

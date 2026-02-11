@@ -12,6 +12,7 @@ import { useAttendanceStore } from "@/store/attendanceStore";
 import { useEffectsStore, type Effect } from "@/store/effectsStore";
 import { resolveShiftForDate, secondsToHms, timeStringToSeconds } from "@/engine/attendanceEngine";
 import type { InsertAdjustment, InsertLeave } from "@shared/schema";
+import { normalizeEmployeeCode } from "@shared/employee-code";
 
 const EFFECT_HEADERS = ["الكود", "الاسم", "التاريخ", "من", "إلى", "النوع", "الحالة", "ملاحظة"];
 const SUPPORTED_TYPES = [
@@ -104,7 +105,7 @@ export default function BulkAdjustmentsImport() {
 
   const { toast } = useToast();
 
-  const employeeMap = useMemo(() => new Map((employees || []).map((e) => [e.code, e])), [employees]);
+  const employeeMap = useMemo(() => new Map((employees || []).map((e) => [normalizeEmployeeCode(e.code), e])), [employees]);
 
   const [fileName, setFileName] = useState("");
   const [validationRows, setValidationRows] = useState<ParsedEffectRow[]>([]);
@@ -191,6 +192,7 @@ export default function BulkAdjustmentsImport() {
         startDate: affectedDates[0],
         endDate: affectedDates[affectedDates.length - 1],
         timezoneOffsetMinutes: new Date().getTimezoneOffset(),
+        employeeCodes: Array.from(new Set(rows.map((row) => normalizeEmployeeCode(row.employeeCode)).filter(Boolean))),
       });
     }
 
@@ -218,7 +220,7 @@ export default function BulkAdjustmentsImport() {
 
     const parsed: ParsedEffectRow[] = rawRows.slice(1).map((raw, idx) => {
       const rowIndex = idx + 2;
-      const employeeCode = String(raw[0] ?? "").trim();
+      const employeeCode = normalizeEmployeeCode(raw[0]);
       const employeeName = String(raw[1] ?? "").trim();
       const date = normalizeDate(raw[2]);
       let fromTime = normalizeTime(raw[3]);
