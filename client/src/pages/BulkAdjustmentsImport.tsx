@@ -3,15 +3,25 @@ import { Sidebar } from "@/components/Sidebar";
 import { Header } from "@/components/Header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import { useEmployees } from "@/hooks/use-employees";
 import { useAdjustments, useImportAdjustments } from "@/hooks/use-data";
 import { useToast } from "@/hooks/use-toast";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { format } from "date-fns";
 import * as XLSX from "xlsx";
+import { useAttendanceStore } from "@/store/attendanceStore";
+import { resolveShiftForDate, secondsToHms, timeStringToSeconds } from "@/engine/attendanceEngine";
 
 const EXPECTED_HEADERS = ["الكود", "الاسم", "التاريخ", "من", "الي", "النوع"];
-const ALLOWED_TYPES = ["اذن صباحي", "اذن مسائي", "إجازة نص يوم", "مأمورية"];
+const ALLOWED_TYPES = ["اذن صباحي", "اذن مسائي", "إجازة نص يوم", "إجازة نص يوم صباح", "إجازة نص يوم مساء", "مأمورية"];
+const FILTER_TYPES = ["اذن صباحي", "اذن مسائي", "إجازة نص يوم", "مأمورية", "إجازة بالخصم", "غياب بعذر"];
+const NORMALIZED_HALF_DAY_TYPE = "إجازة نص يوم";
+const LEAVE_HEADERS = ["الكود", "الاسم", "التاريخ", "النوع", "ملاحظة"];
+const LEAVE_TYPES = ["إجازة بالخصم", "غياب بعذر"];
+
+const DEFAULT_TIMEZONE_OFFSET_MINUTES = -120;
 
 type ImportRow = {
   rowIndex: number;
@@ -21,6 +31,27 @@ type ImportRow = {
   fromTime: string;
   toTime: string;
   type: string;
+};
+
+type AdjustmentStatus = "Valid" | "Auto-filled" | "Auto-inferred" | "Needs Review" | "Invalid";
+
+type ValidationRow = ImportRow & {
+  normalizedType: "اذن صباحي" | "اذن مسائي" | "إجازة نص يوم" | "مأمورية";
+  inferredSide?: "صباح" | "مساء";
+  status: AdjustmentStatus;
+  reason?: string;
+  shiftStart?: string;
+  shiftEnd?: string;
+  needsReview?: boolean;
+};
+
+type LeaveImportRow = {
+  rowIndex: number;
+  employeeCode: string;
+  employeeName: string;
+  date: string;
+  type: "إجازة بالخصم" | "غياب بعذر";
+  note: string;
 };
 
 type InvalidRow = {
@@ -70,12 +101,21 @@ const normalizeDate = (value: unknown) => {
 export default function BulkAdjustmentsImport() {
   const { data: employees } = useEmployees();
   const employeeCodes = useMemo(() => new Set(employees?.map((emp) => emp.code) || []), [employees]);
+  const employeesByCode = useMemo(() => new Map(employees?.map((emp) => [emp.code, emp]) || []), [employees]);
+  const punches = useAttendanceStore((state) => state.punches);
+  const rules = useAttendanceStore((state) => state.rules);
+  const adjustmentsState = useAttendanceStore((state) => state.adjustments);
+  const setAdjustments = useAttendanceStore((state) => state.setAdjustments);
+  const config = useAttendanceStore((state) => state.config);
   const importAdjustments = useImportAdjustments();
   const { toast } = useToast();
 
   const [fileName, setFileName] = useState("");
-  const [validRows, setValidRows] = useState<ImportRow[]>([]);
-  const [invalidRows, setInvalidRows] = useState<InvalidRow[]>([]);
+  const [validationRows, setValidationRows] = useState<ValidationRow[]>([]);
+  const [applyToAllSimilar, setApplyToAllSimilar] = useState(false);
+  const [leaveFileName, setLeaveFileName] = useState("");
+  const [leaveRows, setLeaveRows] = useState<LeaveImportRow[]>([]);
+  const [leaveInvalidRows, setLeaveInvalidRows] = useState<InvalidRow[]>([]);
 
   const [filters, setFilters] = useState({ startDate: "", endDate: "", employeeCode: "", type: "all" });
   const adjustmentsFilters = {
@@ -85,6 +125,63 @@ export default function BulkAdjustmentsImport() {
     type: filters.type !== "all" ? filters.type : undefined,
   };
   const { data: adjustments } = useAdjustments(adjustmentsFilters);
+
+  const normalizeHalfDaySide = (type: string) => {
+    if (type.includes("صباح")) return "صباح";
+    if (type.includes("مساء")) return "مساء";
+    return null;
+  };
+
+  const buildRangeFromShift = ({
+    shiftStart,
+    shiftEnd,
+    durationMinutes,
+    side,
+  }: {
+    shiftStart: string;
+    shiftEnd: string;
+    durationMinutes: number;
+    side: "صباح" | "مساء";
+  }) => {
+    if (side === "صباح") {
+      const startSeconds = timeStringToSeconds(shiftStart);
+      return {
+        fromTime: secondsToHms(startSeconds),
+        toTime: secondsToHms(startSeconds + durationMinutes * 60),
+      };
+    }
+    const endSeconds = timeStringToSeconds(shiftEnd);
+    return {
+      fromTime: secondsToHms(endSeconds - durationMinutes * 60),
+      toTime: secondsToHms(endSeconds),
+    };
+  };
+
+  const buildLocalDateKey = (date: Date, offsetMinutes: number) => {
+    const localDate = new Date(date.getTime() - offsetMinutes * 60 * 1000);
+    const year = localDate.getUTCFullYear();
+    const month = String(localDate.getUTCMonth() + 1).padStart(2, "0");
+    const day = String(localDate.getUTCDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  };
+
+  const getPunchesForEmployeeDate = (employeeCode: string, dateStr: string) => {
+    const punchesForEmployee = punches.filter((punch) => punch.employeeCode === employeeCode);
+    const punchesForDate = punchesForEmployee.filter(
+      (punch) => buildLocalDateKey(punch.punchDatetime, DEFAULT_TIMEZONE_OFFSET_MINUTES) === dateStr
+    ).sort((a, b) => a.punchDatetime.getTime() - b.punchDatetime.getTime());
+    const checkIn = punchesForDate[0]?.punchDatetime ?? null;
+    const checkOut = punchesForDate.length > 1 ? punchesForDate[punchesForDate.length - 1].punchDatetime : null;
+    const checkInLocal = checkIn ? new Date(checkIn.getTime() - DEFAULT_TIMEZONE_OFFSET_MINUTES * 60 * 1000) : null;
+    const checkOutLocal = checkOut ? new Date(checkOut.getTime() - DEFAULT_TIMEZONE_OFFSET_MINUTES * 60 * 1000) : null;
+    const checkInSeconds = checkInLocal
+      ? checkInLocal.getUTCHours() * 3600 + checkInLocal.getUTCMinutes() * 60 + checkInLocal.getUTCSeconds()
+      : null;
+    const checkOutSeconds = checkOutLocal
+      ? checkOutLocal.getUTCHours() * 3600 + checkOutLocal.getUTCMinutes() * 60 + checkOutLocal.getUTCSeconds()
+      : null;
+    return { checkInSeconds, checkOutSeconds };
+  };
 
   const handleFile = async (file: File) => {
     setFileName(file.name);
@@ -98,13 +195,25 @@ export default function BulkAdjustmentsImport() {
     const headerMatch = EXPECTED_HEADERS.every((header, index) => headers[index] === header);
     if (!headerMatch) {
       toast({ title: "خطأ", description: "تأكد من عناوين الأعمدة العربية المطلوبة بالترتيب الصحيح.", variant: "destructive" });
-      setValidRows([]);
-      setInvalidRows([{ rowIndex: 1, reason: "عناوين الأعمدة غير مطابقة" }]);
+      setValidationRows([{
+        rowIndex: 1,
+        employeeCode: "-",
+        employeeName: "-",
+        date: "",
+        fromTime: "",
+        toTime: "",
+        type: "",
+        normalizedType: "اذن صباحي",
+        status: "Invalid",
+        reason: "عناوين الأعمدة غير مطابقة",
+      }]);
       return;
     }
 
-    const nextValid: ImportRow[] = [];
-    const nextInvalid: InvalidRow[] = [];
+    const nextValidation: ValidationRow[] = [];
+    const permissionMinutes = config.defaultPermissionMinutes || 120;
+    const halfDayMinutes = config.defaultHalfDayMinutes || 240;
+    const defaultHalfDaySide = config.defaultHalfDaySide || "صباح";
 
     rows.slice(1).forEach((row, index) => {
       const rowIndex = index + 2;
@@ -115,6 +224,238 @@ export default function BulkAdjustmentsImport() {
       const fromTime = normalizeTime(fromRaw);
       const toTime = normalizeTime(toRaw);
       const type = String(typeRaw ?? "").trim();
+      const normalizedType = type.startsWith("إجازة نص يوم") ? NORMALIZED_HALF_DAY_TYPE : type;
+      const halfDaySideFromType = normalizeHalfDaySide(type);
+      const employee = employeesByCode.get(employeeCode);
+
+      if (!employeeCode) {
+        nextValidation.push({
+          rowIndex,
+          employeeCode,
+          employeeName,
+          date,
+          fromTime,
+          toTime,
+          type,
+          normalizedType: "اذن صباحي",
+          status: "Invalid",
+          reason: "كود الموظف مفقود",
+        });
+        return;
+      }
+      if (!employeeCodes.has(employeeCode)) {
+        nextValidation.push({
+          rowIndex,
+          employeeCode,
+          employeeName,
+          date,
+          fromTime,
+          toTime,
+          type,
+          normalizedType: "اذن صباحي",
+          status: "Invalid",
+          reason: "كود الموظف غير موجود",
+        });
+        return;
+      }
+      if (!date) {
+        nextValidation.push({
+          rowIndex,
+          employeeCode,
+          employeeName,
+          date,
+          fromTime,
+          toTime,
+          type,
+          normalizedType: "اذن صباحي",
+          status: "Invalid",
+          reason: "التاريخ غير صالح",
+        });
+        return;
+      }
+      if (!ALLOWED_TYPES.includes(type)) {
+        nextValidation.push({
+          rowIndex,
+          employeeCode,
+          employeeName,
+          date,
+          fromTime,
+          toTime,
+          type,
+          normalizedType: "اذن صباحي",
+          status: "Invalid",
+          reason: "نوع غير مسموح",
+        });
+        return;
+      }
+      if (!employee) {
+        nextValidation.push({
+          rowIndex,
+          employeeCode,
+          employeeName,
+          date,
+          fromTime,
+          toTime,
+          type,
+          normalizedType: normalizedType as ValidationRow["normalizedType"],
+          status: "Invalid",
+          reason: "بيانات الموظف غير مكتملة",
+        });
+        return;
+      }
+
+      const { shiftStart, shiftEnd } = resolveShiftForDate({ employee, dateStr: date, rules });
+      const hasFrom = Boolean(fromTime);
+      const hasTo = Boolean(toTime);
+      let nextFrom = fromTime;
+      let nextTo = toTime;
+      let status: AdjustmentStatus = "Valid";
+      let reason: string | undefined;
+      let inferredSide: "صباح" | "مساء" | undefined;
+      let needsReview = false;
+
+      if (normalizedType === "مأمورية") {
+        if (!hasFrom || !hasTo) {
+          status = "Invalid";
+          reason = "المأمورية يجب أن تحتوي على من / إلى";
+        }
+      }
+
+      if (status !== "Invalid" && (!hasFrom || !hasTo)) {
+        if (normalizedType === "اذن صباحي") {
+          const range = buildRangeFromShift({
+            shiftStart,
+            shiftEnd,
+            durationMinutes: permissionMinutes,
+            side: "صباح",
+          });
+          nextFrom = range.fromTime;
+          nextTo = range.toTime;
+          status = "Auto-filled";
+          inferredSide = "صباح";
+        } else if (normalizedType === "اذن مسائي") {
+          const range = buildRangeFromShift({
+            shiftStart,
+            shiftEnd,
+            durationMinutes: permissionMinutes,
+            side: "مساء",
+          });
+          nextFrom = range.fromTime;
+          nextTo = range.toTime;
+          status = "Auto-filled";
+          inferredSide = "مساء";
+        } else if (normalizedType === NORMALIZED_HALF_DAY_TYPE) {
+          if (halfDaySideFromType) {
+            const range = buildRangeFromShift({
+              shiftStart,
+              shiftEnd,
+              durationMinutes: halfDayMinutes,
+              side: halfDaySideFromType,
+            });
+            nextFrom = range.fromTime;
+            nextTo = range.toTime;
+            status = "Auto-filled";
+            inferredSide = halfDaySideFromType;
+          } else {
+            const { checkInSeconds, checkOutSeconds } = getPunchesForEmployeeDate(employeeCode, date);
+            const shiftStartSeconds = timeStringToSeconds(shiftStart);
+            const shiftEndSeconds = timeStringToSeconds(shiftEnd);
+            const shiftDuration = Math.max(0, shiftEndSeconds - shiftStartSeconds);
+            const midShiftSeconds = shiftStartSeconds + shiftDuration / 2;
+
+            if (checkInSeconds !== null && checkInSeconds >= midShiftSeconds) {
+              const range = buildRangeFromShift({
+                shiftStart,
+                shiftEnd,
+                durationMinutes: halfDayMinutes,
+                side: "صباح",
+              });
+              nextFrom = range.fromTime;
+              nextTo = range.toTime;
+              status = "Auto-inferred";
+              inferredSide = "صباح";
+            } else if (checkOutSeconds !== null && checkOutSeconds <= midShiftSeconds) {
+              const range = buildRangeFromShift({
+                shiftStart,
+                shiftEnd,
+                durationMinutes: halfDayMinutes,
+                side: "مساء",
+              });
+              nextFrom = range.fromTime;
+              nextTo = range.toTime;
+              status = "Auto-inferred";
+              inferredSide = "مساء";
+            } else {
+              status = "Needs Review";
+              inferredSide = defaultHalfDaySide;
+              reason = "يتطلب تحديد نصف اليوم بناءً على البصمات";
+              needsReview = true;
+            }
+          }
+        } else {
+          status = "Invalid";
+          reason = "وقت البداية أو النهاية غير صالح";
+        }
+      }
+
+      if (status !== "Invalid" && (!nextFrom || !nextTo)) {
+        status = "Invalid";
+        reason = "وقت البداية أو النهاية غير صالح";
+      }
+
+      if (status !== "Invalid" && nextFrom && nextTo && nextFrom >= nextTo) {
+        status = "Invalid";
+        reason = "وقت البداية يجب أن يكون قبل النهاية";
+      }
+
+      nextValidation.push({
+        rowIndex,
+        employeeCode,
+        employeeName,
+        date,
+        fromTime: nextFrom,
+        toTime: nextTo,
+        type,
+        normalizedType: normalizedType as ValidationRow["normalizedType"],
+        status,
+        reason,
+        inferredSide,
+        shiftStart,
+        shiftEnd,
+        needsReview,
+      });
+    });
+
+    setValidationRows(nextValidation);
+  };
+
+  const handleLeaveFile = async (file: File) => {
+    setLeaveFileName(file.name);
+    const buffer = await file.arrayBuffer();
+    const workbook = XLSX.read(buffer, { type: "array" });
+    const sheetName = workbook.SheetNames[0];
+    const sheet = workbook.Sheets[sheetName];
+    const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "" }) as unknown[][];
+    const headerRow = rows[0] || [];
+    const headers = headerRow.map((cell) => String(cell).trim());
+    const headerMatch = LEAVE_HEADERS.every((header, index) => headers[index] === header);
+    if (!headerMatch) {
+      toast({ title: "خطأ", description: "تأكد من عناوين الأعمدة المطلوبة في ملف الإجازات.", variant: "destructive" });
+      setLeaveRows([]);
+      setLeaveInvalidRows([{ rowIndex: 1, reason: "عناوين الأعمدة غير مطابقة" }]);
+      return;
+    }
+
+    const nextRows: LeaveImportRow[] = [];
+    const nextInvalid: InvalidRow[] = [];
+    rows.slice(1).forEach((row, index) => {
+      const rowIndex = index + 2;
+      const [code, name, dateRaw, typeRaw, noteRaw] = row;
+      const employeeCode = String(code ?? "").trim();
+      const employeeName = String(name ?? "").trim();
+      const date = normalizeDate(dateRaw);
+      const type = String(typeRaw ?? "").trim();
+      const note = String(noteRaw ?? "").trim();
 
       if (!employeeCode) {
         nextInvalid.push({ rowIndex, reason: "كود الموظف مفقود" });
@@ -128,46 +469,83 @@ export default function BulkAdjustmentsImport() {
         nextInvalid.push({ rowIndex, reason: "التاريخ غير صالح" });
         return;
       }
-      if (!fromTime || !toTime) {
-        nextInvalid.push({ rowIndex, reason: "وقت البداية أو النهاية غير صالح" });
-        return;
-      }
-      if (!ALLOWED_TYPES.includes(type)) {
+      if (!LEAVE_TYPES.includes(type)) {
         nextInvalid.push({ rowIndex, reason: "نوع غير مسموح" });
         return;
       }
-      if (fromTime >= toTime) {
-        nextInvalid.push({ rowIndex, reason: "وقت البداية يجب أن يكون قبل النهاية" });
-        return;
-      }
 
-      nextValid.push({
+      nextRows.push({
         rowIndex,
         employeeCode,
         employeeName,
         date,
-        fromTime,
-        toTime,
-        type,
+        type: type as LeaveImportRow["type"],
+        note,
       });
     });
 
-    setValidRows(nextValid);
-    setInvalidRows(nextInvalid);
+    setLeaveRows(nextRows);
+    setLeaveInvalidRows(nextInvalid);
+  };
+
+  const handleLeaveImport = () => {
+    if (leaveRows.length === 0) {
+      toast({ title: "تنبيه", description: "لا توجد بيانات صالحة للاستيراد.", variant: "destructive" });
+      return;
+    }
+    const map = new Map<string, any>();
+    let maxId = adjustmentsState.reduce((max, adj) => Math.max(max, adj.id || 0), 0);
+    adjustmentsState.forEach((adj) => {
+      map.set(`${adj.employeeCode}__${adj.date}__${adj.type}`, adj);
+    });
+
+    leaveRows.forEach((row) => {
+      const key = `${row.employeeCode}__${row.date}__${row.type}`;
+      if (map.has(key)) {
+        const existing = map.get(key);
+        map.set(key, {
+          ...existing,
+          note: row.note || existing.note || null,
+          sourceFileName: leaveFileName || existing.sourceFileName,
+        });
+      } else {
+        maxId += 1;
+        map.set(key, {
+          id: maxId,
+          employeeCode: row.employeeCode,
+          date: row.date,
+          type: row.type,
+          fromTime: "00:00:00",
+          toTime: "23:59:59",
+          source: "excel",
+          sourceFileName: leaveFileName || null,
+          note: row.note || null,
+        });
+      }
+    });
+
+    setAdjustments(Array.from(map.values()));
+    toast({ title: "تم الاستيراد", description: `تم حفظ ${leaveRows.length} سجل بنجاح.` });
   };
 
   const handleImport = () => {
-    if (validRows.length === 0) {
+    const needsReview = validationRows.some((row) => row.status === "Needs Review");
+    if (needsReview) {
+      toast({ title: "تنبيه", description: "يرجى مراجعة الصفوف التي تحتاج تحديد النصف قبل الاستيراد.", variant: "destructive" });
+      return;
+    }
+    const readyRows = validationRows.filter((row) => row.status !== "Invalid");
+    if (readyRows.length === 0) {
       toast({ title: "تنبيه", description: "لا توجد بيانات صالحة للاستيراد.", variant: "destructive" });
       return;
     }
     importAdjustments.mutate({
       sourceFileName: fileName,
-      rows: validRows.map((row) => ({
+      rows: readyRows.map((row) => ({
         rowIndex: row.rowIndex,
         employeeCode: row.employeeCode,
         date: row.date,
-        type: row.type,
+        type: row.normalizedType,
         fromTime: row.fromTime,
         toTime: row.toTime,
         source: "excel",
@@ -178,7 +556,7 @@ export default function BulkAdjustmentsImport() {
       onSuccess: (data) => {
         toast({ title: "تم الاستيراد", description: `تم حفظ ${data.inserted} سجل بنجاح.` });
         if (data.invalid.length > 0) {
-          setInvalidRows(data.invalid);
+          toast({ title: "تنبيه", description: `تم تجاهل ${data.invalid.length} سجل غير صالح.`, variant: "destructive" });
         }
       },
       onError: (error: any) => {
@@ -186,6 +564,55 @@ export default function BulkAdjustmentsImport() {
       },
     });
   };
+
+  const statusBadge = (status: AdjustmentStatus) => {
+    const styles: Record<AdjustmentStatus, string> = {
+      Valid: "bg-emerald-50 text-emerald-700 border-emerald-200",
+      "Auto-filled": "bg-blue-50 text-blue-700 border-blue-200",
+      "Auto-inferred": "bg-purple-50 text-purple-700 border-purple-200",
+      "Needs Review": "bg-amber-50 text-amber-700 border-amber-200",
+      Invalid: "bg-rose-50 text-rose-700 border-rose-200",
+    };
+    return <Badge className={`border ${styles[status]}`}>{status}</Badge>;
+  };
+
+  const updateReviewSide = (rowIndex: number, side: "صباح" | "مساء", applyToAll: boolean) => {
+    setValidationRows((prev) => {
+      return prev.map((row) => {
+        if (!row.needsReview) return row;
+        const shouldUpdate = applyToAll ? row.needsReview : row.rowIndex === rowIndex;
+        if (!shouldUpdate || !row.shiftStart || !row.shiftEnd) return row;
+        const range = buildRangeFromShift({
+          shiftStart: row.shiftStart,
+          shiftEnd: row.shiftEnd,
+          durationMinutes: config.defaultHalfDayMinutes || 240,
+          side,
+        });
+        return {
+          ...row,
+          fromTime: range.fromTime,
+          toTime: range.toTime,
+          status: "Auto-filled",
+          inferredSide: side,
+          reason: undefined,
+          needsReview: false,
+        };
+      });
+    });
+  };
+
+  const summaryCounts = useMemo(() => {
+    return validationRows.reduce<Record<AdjustmentStatus, number>>((acc, row) => {
+      acc[row.status] = (acc[row.status] || 0) + 1;
+      return acc;
+    }, {
+      Valid: 0,
+      "Auto-filled": 0,
+      "Auto-inferred": 0,
+      "Needs Review": 0,
+      Invalid: 0,
+    });
+  }, [validationRows]);
 
   return (
     <div className="flex h-screen bg-slate-50/50">
@@ -215,11 +642,106 @@ export default function BulkAdjustmentsImport() {
                 </div>
               </div>
 
+              <div className="bg-slate-50 border border-border/50 rounded-xl p-4 space-y-4">
+                <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                  <div>
+                    <h3 className="font-semibold mb-1">جدول التحقق من الاستيراد</h3>
+                    <p className="text-sm text-muted-foreground">راجع الحالات، وأكمل الصفوف التي تحتاج تحديد النصف.</p>
+                  </div>
+                  <div className="flex flex-wrap gap-2 text-xs">
+                    <Badge variant="outline">Valid: {summaryCounts.Valid}</Badge>
+                    <Badge variant="outline">Auto-filled: {summaryCounts["Auto-filled"]}</Badge>
+                    <Badge variant="outline">Auto-inferred: {summaryCounts["Auto-inferred"]}</Badge>
+                    <Badge variant="outline">Needs Review: {summaryCounts["Needs Review"]}</Badge>
+                    <Badge variant="outline">Invalid: {summaryCounts.Invalid}</Badge>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3 text-sm">
+                  <Checkbox
+                    checked={applyToAllSimilar}
+                    onCheckedChange={(value) => setApplyToAllSimilar(Boolean(value))}
+                  />
+                  <span>تطبيق الاختيار على كل الصفوف المشابهة</span>
+                </div>
+                <div className="max-h-[320px] overflow-auto text-sm">
+                  {validationRows.length === 0 ? (
+                    <p className="text-muted-foreground">لا توجد بيانات بعد.</p>
+                  ) : (
+                    <table className="w-full text-right text-xs">
+                      <thead className="sticky top-0 bg-slate-50">
+                        <tr>
+                          <th className="py-2 px-2">الصف</th>
+                          <th className="py-2 px-2">الكود</th>
+                          <th className="py-2 px-2">التاريخ</th>
+                          <th className="py-2 px-2">النوع</th>
+                          <th className="py-2 px-2">النصف</th>
+                          <th className="py-2 px-2">من</th>
+                          <th className="py-2 px-2">إلى</th>
+                          <th className="py-2 px-2">الحالة</th>
+                          <th className="py-2 px-2">السبب</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {validationRows.map((row) => (
+                          <tr key={`${row.employeeCode}-${row.rowIndex}`} className="border-t border-border/30">
+                            <td className="py-2 px-2">{row.rowIndex}</td>
+                            <td className="py-2 px-2">{row.employeeCode}</td>
+                            <td className="py-2 px-2">{row.date || "-"}</td>
+                            <td className="py-2 px-2">{row.type || "-"}</td>
+                            <td className="py-2 px-2">
+                              {row.status === "Needs Review" ? (
+                                <Select
+                                  value={row.inferredSide}
+                                  onValueChange={(value) => updateReviewSide(row.rowIndex, value as "صباح" | "مساء", applyToAllSimilar)}
+                                >
+                                  <SelectTrigger className="h-7 text-xs w-24">
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="صباح">صباح</SelectItem>
+                                    <SelectItem value="مساء">مساء</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              ) : (
+                                row.inferredSide || "-"
+                              )}
+                            </td>
+                            <td className="py-2 px-2">{row.fromTime || "-"}</td>
+                            <td className="py-2 px-2">{row.toTime || "-"}</td>
+                            <td className="py-2 px-2">{statusBadge(row.status)}</td>
+                            <td className="py-2 px-2 text-muted-foreground">{row.reason || "-"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-white rounded-2xl border border-border/50 shadow-sm p-6 space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center gap-4 justify-between">
+                <div>
+                  <h2 className="text-lg font-semibold">استيراد إجازات بالخصم / غياب بعذر</h2>
+                  <p className="text-sm text-muted-foreground">استخدم الأعمدة: الكود، الاسم، التاريخ، النوع، ملاحظة.</p>
+                </div>
+                <div className="flex items-center gap-3">
+                  <Input
+                    type="file"
+                    accept=".xlsx,.xls"
+                    onChange={(event) => {
+                      const file = event.target.files?.[0];
+                      if (file) handleLeaveFile(file);
+                    }}
+                  />
+                  <Button onClick={handleLeaveImport}>حفظ الإجازات</Button>
+                </div>
+              </div>
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="bg-slate-50 border border-border/50 rounded-xl p-4">
                   <h3 className="font-semibold mb-2">الصفوف الصالحة</h3>
                   <div className="max-h-60 overflow-auto text-sm">
-                    {validRows.length === 0 ? (
+                    {leaveRows.length === 0 ? (
                       <p className="text-muted-foreground">لا توجد بيانات صالحة بعد.</p>
                     ) : (
                       <table className="w-full text-right text-xs">
@@ -228,20 +750,18 @@ export default function BulkAdjustmentsImport() {
                             <th className="py-1">الصف</th>
                             <th className="py-1">الكود</th>
                             <th className="py-1">التاريخ</th>
-                            <th className="py-1">من</th>
-                            <th className="py-1">إلى</th>
                             <th className="py-1">النوع</th>
+                            <th className="py-1">ملاحظة</th>
                           </tr>
                         </thead>
                         <tbody>
-                          {validRows.map((row) => (
+                          {leaveRows.map((row) => (
                             <tr key={`${row.employeeCode}-${row.rowIndex}`} className="border-t border-border/30">
                               <td className="py-1">{row.rowIndex}</td>
                               <td className="py-1">{row.employeeCode}</td>
                               <td className="py-1">{row.date}</td>
-                              <td className="py-1">{row.fromTime}</td>
-                              <td className="py-1">{row.toTime}</td>
                               <td className="py-1">{row.type}</td>
+                              <td className="py-1">{row.note || "-"}</td>
                             </tr>
                           ))}
                         </tbody>
@@ -252,17 +772,25 @@ export default function BulkAdjustmentsImport() {
                 <div className="bg-slate-50 border border-border/50 rounded-xl p-4">
                   <h3 className="font-semibold mb-2">تحقق الاستيراد</h3>
                   <div className="max-h-60 overflow-auto text-sm">
-                    {invalidRows.length === 0 ? (
+                    {leaveInvalidRows.length === 0 ? (
                       <p className="text-muted-foreground">لا توجد أخطاء حالياً.</p>
                     ) : (
-                      <ul className="space-y-2">
-                        {invalidRows.map((row, index) => (
-                          <li key={`${row.rowIndex}-${index}`} className="flex items-center justify-between border border-border/40 rounded-lg p-2">
-                            <span>الصف {row.rowIndex}</span>
-                            <span className="text-red-600">{row.reason}</span>
-                          </li>
-                        ))}
-                      </ul>
+                      <table className="w-full text-right text-xs">
+                        <thead className="sticky top-0 bg-slate-50">
+                          <tr>
+                            <th className="py-1">الصف</th>
+                            <th className="py-1">سبب عدم الصلاحية</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {leaveInvalidRows.map((row, index) => (
+                            <tr key={`${row.rowIndex}-${index}`} className="border-t border-border/30">
+                              <td className="py-1">{row.rowIndex}</td>
+                              <td className="py-1 text-red-600">{row.reason}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
                     )}
                   </div>
                 </div>
@@ -297,7 +825,7 @@ export default function BulkAdjustmentsImport() {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">كل الأنواع</SelectItem>
-                      {ALLOWED_TYPES.map((type) => (
+                      {FILTER_TYPES.map((type) => (
                         <SelectItem key={type} value={type}>{type}</SelectItem>
                       ))}
                     </SelectContent>

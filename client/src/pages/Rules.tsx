@@ -28,6 +28,8 @@ export default function Rules() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const setRules = useAttendanceStore((state) => state.setRules);
   const currentRules = useAttendanceStore((state) => state.rules);
+  const config = useAttendanceStore((state) => state.config);
+  const setConfig = useAttendanceStore((state) => state.setConfig);
   const [importMode, setImportMode] = useState<"replace" | "merge">("replace");
 
   const handleDelete = async (id: number) => {
@@ -162,6 +164,57 @@ export default function Rules() {
         <Header title="القواعد والورديات" />
         <main className="flex-1 overflow-y-auto p-8">
           <div className="max-w-6xl mx-auto space-y-6">
+            <Card>
+              <CardHeader>
+                <CardTitle>إعدادات التسويات الافتراضية</CardTitle>
+              </CardHeader>
+              <CardContent className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">مدة الإذن الافتراضية (دقائق)</label>
+                  <Input
+                    type="number"
+                    min={30}
+                    value={config.defaultPermissionMinutes}
+                    onChange={(event) => {
+                      const value = Number(event.target.value);
+                      if (!Number.isFinite(value)) return;
+                      setConfig({ ...config, defaultPermissionMinutes: Math.max(30, value) });
+                    }}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">مدة نصف اليوم الافتراضية (دقائق)</label>
+                  <Input
+                    type="number"
+                    min={60}
+                    value={config.defaultHalfDayMinutes}
+                    onChange={(event) => {
+                      const value = Number(event.target.value);
+                      if (!Number.isFinite(value)) return;
+                      setConfig({ ...config, defaultHalfDayMinutes: Math.max(60, value) });
+                    }}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">الافتراضي عند تعذر الاستدلال</label>
+                  <Select
+                    value={config.defaultHalfDaySide}
+                    onValueChange={(value) => {
+                      setConfig({ ...config, defaultHalfDaySide: value as "صباح" | "مساء" });
+                    }}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="صباح">صباح</SelectItem>
+                      <SelectItem value="مساء">مساء</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </CardContent>
+            </Card>
+
             <div className="flex justify-between items-center">
               <h2 className="text-2xl font-bold font-display">إدارة القواعد الخاصة</h2>
               <div className="flex gap-2">
