@@ -192,29 +192,52 @@ export default function Attendance() {
     const workbook = XLSX.utils.book_new();
     const detailSheet = XLSX.utils.aoa_to_sheet(detailRows);
     const summarySheet = XLSX.utils.aoa_to_sheet(summaryRows);
+    const applyHeaderStyle = (sheet: XLSX.WorkSheet, headerCount: number) => {
+      for (let colIndex = 0; colIndex < headerCount; colIndex += 1) {
+        const cellAddress = XLSX.utils.encode_cell({ r: 0, c: colIndex });
+        const cell = sheet[cellAddress];
+        if (!cell) continue;
+        cell.s = {
+          font: { bold: true },
+          fill: { patternType: "solid", fgColor: { rgb: "E2E8F0" } },
+        };
+      }
+    };
+    applyHeaderStyle(detailSheet, detailHeaders.length);
+    applyHeaderStyle(summarySheet, summaryHeaders.length);
 
-    detailSheet["!cols"] = [
-      { wch: 12 }, { wch: 10 }, { wch: 10 }, { wch: 20 }, { wch: 10 },
-      { wch: 10 }, { wch: 12 }, { wch: 10 }, { wch: 14 }, { wch: 16 },
-      { wch: 12 }, { wch: 10 }, { wch: 10 }, { wch: 12 }, { wch: 10 },
-      { wch: 8 }, { wch: 14 }, { wch: 30 },
-    ];
+    const buildAutoWidths = (rows: any[][]) => {
+      if (rows.length === 0) return [];
+      const widths = rows[0].map((_, colIndex) => {
+        const max = rows.reduce((acc, row) => {
+          const value = row[colIndex];
+          if (value === null || value === undefined) return acc;
+          const length = String(value).length;
+          return Math.max(acc, length);
+        }, 6);
+        return { wch: Math.min(Math.max(max + 2, 8), 40) };
+      });
+      return widths;
+    };
 
-    summarySheet["!cols"] = [
-      { wch: 10 }, { wch: 20 }, { wch: 14 }, { wch: 14 }, { wch: 16 },
-      { wch: 18 }, { wch: 18 }, { wch: 14 }, { wch: 16 }, { wch: 20 },
-      { wch: 18 }, { wch: 14 }, { wch: 16 }, { wch: 16 }, { wch: 14 },
-      { wch: 14 },
-    ];
+    detailSheet["!cols"] = buildAutoWidths(detailRows);
+    summarySheet["!cols"] = buildAutoWidths(summaryRows);
+
+    detailSheet["!freeze"] = { xSplit: 0, ySplit: 1 };
+    summarySheet["!freeze"] = { xSplit: 0, ySplit: 1 };
+    detailSheet["!rtl"] = true;
+    summarySheet["!rtl"] = true;
 
     for (let rowIndex = 1; rowIndex < detailRows.length; rowIndex += 1) {
       const isFridayRow = detailRows[rowIndex][8] === "جمعة";
-      const hasViolation = detailRows[rowIndex][16] !== "";
+      const hasViolation = detailRows[rowIndex][19] !== "";
       const fill = isFridayRow
         ? "D9E8FF"
         : hasViolation
           ? "FFE5E5"
-          : "E7F7E7";
+          : rowIndex % 2 === 0
+            ? "F8FAFC"
+            : "FFFFFF";
       for (let colIndex = 0; colIndex < detailHeaders.length; colIndex += 1) {
         const cellAddress = XLSX.utils.encode_cell({ r: rowIndex, c: colIndex });
         const cell = detailSheet[cellAddress];
@@ -253,7 +276,7 @@ export default function Attendance() {
         overtimeCell.t = "n";
         overtimeCell.z = "0.00";
       }
-      const penaltyColumns = [12, 13, 14, 15, 16];
+      const penaltyColumns = [12, 13, 14, 15, 16, 17, 18];
       penaltyColumns.forEach((colIndex) => {
         const penaltyCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: colIndex })];
         if (penaltyCell && penaltyCell.v !== "") {
@@ -261,6 +284,57 @@ export default function Attendance() {
           penaltyCell.z = "0.00";
         }
       });
+      const totalPenaltyCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: 19 })];
+      if (totalPenaltyCell) {
+        const rowNumber = rowIndex + 1;
+        totalPenaltyCell.f = `M${rowNumber}+N${rowNumber}+O${rowNumber}+P${rowNumber}*2`;
+        totalPenaltyCell.t = "n";
+        totalPenaltyCell.z = "0.00";
+      }
+    }
+
+    for (let rowIndex = 1; rowIndex < summaryRows.length; rowIndex += 1) {
+      const fill = rowIndex % 2 === 0 ? "F8FAFC" : "FFFFFF";
+      for (let colIndex = 0; colIndex < summaryHeaders.length; colIndex += 1) {
+        const cellAddress = XLSX.utils.encode_cell({ r: rowIndex, c: colIndex });
+        const cell = summarySheet[cellAddress];
+        if (!cell) continue;
+        cell.s = {
+          ...(cell.s || {}),
+          fill: { patternType: "solid", fgColor: { rgb: fill } },
+        };
+      }
+      const dateCell = summarySheet[XLSX.utils.encode_cell({ r: rowIndex, c: 21 })];
+      if (dateCell && dateCell.v !== "") {
+        dateCell.t = "n";
+        dateCell.z = "yyyy-mm-dd";
+      }
+      for (let colIndex = 2; colIndex <= 20; colIndex += 1) {
+        const cell = summarySheet[XLSX.utils.encode_cell({ r: rowIndex, c: colIndex })];
+        if (cell && cell.v !== "") {
+          cell.t = "n";
+          cell.z = "0.00";
+        }
+      }
+      const totalAbsenceCell = summarySheet[XLSX.utils.encode_cell({ r: rowIndex, c: 11 })];
+      const totalCompCell = summarySheet[XLSX.utils.encode_cell({ r: rowIndex, c: 16 })];
+      const totalPenaltyCell = summarySheet[XLSX.utils.encode_cell({ r: rowIndex, c: 20 })];
+      const rowNumber = rowIndex + 1;
+      if (totalAbsenceCell) {
+        totalAbsenceCell.f = `H${rowNumber}*2+I${rowNumber}`;
+        totalAbsenceCell.t = "n";
+        totalAbsenceCell.z = "0.00";
+      }
+      if (totalCompCell) {
+        totalCompCell.f = `O${rowNumber}+P${rowNumber}`;
+        totalCompCell.t = "n";
+        totalCompCell.z = "0.00";
+      }
+      if (totalPenaltyCell) {
+        totalPenaltyCell.f = `R${rowNumber}+S${rowNumber}+T${rowNumber}+L${rowNumber}+J${rowNumber}`;
+        totalPenaltyCell.t = "n";
+        totalPenaltyCell.z = "0.00";
+      }
     }
 
     XLSX.utils.book_append_sheet(workbook, detailSheet, "تفصيلي");
@@ -590,6 +664,9 @@ function StatusBadge({ status }: { status: string | null }) {
     "Absent": "status-absent",
     "Late": "status-late",
     "Excused": "status-excused",
+    "Leave Deduction": "bg-rose-100 text-rose-700 border-rose-200",
+    "Excused Absence": "bg-amber-100 text-amber-700 border-amber-200",
+    "Termination Period": "bg-slate-200 text-slate-700 border-slate-300",
     "Friday": "bg-amber-100 text-amber-700 border-amber-200",
     "Friday Attended": "bg-amber-100 text-amber-700 border-amber-200",
     "Comp Day": "bg-emerald-100 text-emerald-700 border-emerald-200",
@@ -601,6 +678,9 @@ function StatusBadge({ status }: { status: string | null }) {
     "Absent": "غياب",
     "Late": "تأخير",
     "Excused": "مأذون",
+    "Leave Deduction": "إجازة بالخصم",
+    "Excused Absence": "غياب بعذر",
+    "Termination Period": "فترة ترك",
     "Friday": "جمعة",
     "Friday Attended": "جمعة (حضور)",
     "Comp Day": "يوم بالبدل",

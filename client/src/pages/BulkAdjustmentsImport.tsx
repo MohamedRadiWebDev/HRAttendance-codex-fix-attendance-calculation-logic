@@ -16,8 +16,10 @@ import { resolveShiftForDate, secondsToHms, timeStringToSeconds } from "@/engine
 
 const EXPECTED_HEADERS = ["الكود", "الاسم", "التاريخ", "من", "الي", "النوع"];
 const ALLOWED_TYPES = ["اذن صباحي", "اذن مسائي", "إجازة نص يوم", "إجازة نص يوم صباح", "إجازة نص يوم مساء", "مأمورية"];
-const FILTER_TYPES = ["اذن صباحي", "اذن مسائي", "إجازة نص يوم", "مأمورية"];
+const FILTER_TYPES = ["اذن صباحي", "اذن مسائي", "إجازة نص يوم", "مأمورية", "إجازة بالخصم", "غياب بعذر"];
 const NORMALIZED_HALF_DAY_TYPE = "إجازة نص يوم";
+const LEAVE_HEADERS = ["الكود", "الاسم", "التاريخ", "النوع", "ملاحظة"];
+const LEAVE_TYPES = ["إجازة بالخصم", "غياب بعذر"];
 
 const DEFAULT_TIMEZONE_OFFSET_MINUTES = -120;
 
@@ -41,6 +43,20 @@ type ValidationRow = ImportRow & {
   shiftStart?: string;
   shiftEnd?: string;
   needsReview?: boolean;
+};
+
+type LeaveImportRow = {
+  rowIndex: number;
+  employeeCode: string;
+  employeeName: string;
+  date: string;
+  type: "إجازة بالخصم" | "غياب بعذر";
+  note: string;
+};
+
+type InvalidRow = {
+  rowIndex: number;
+  reason: string;
 };
 
 const normalizeTime = (value: unknown) => {
@@ -88,6 +104,8 @@ export default function BulkAdjustmentsImport() {
   const employeesByCode = useMemo(() => new Map(employees?.map((emp) => [emp.code, emp]) || []), [employees]);
   const punches = useAttendanceStore((state) => state.punches);
   const rules = useAttendanceStore((state) => state.rules);
+  const adjustmentsState = useAttendanceStore((state) => state.adjustments);
+  const setAdjustments = useAttendanceStore((state) => state.setAdjustments);
   const config = useAttendanceStore((state) => state.config);
   const importAdjustments = useImportAdjustments();
   const { toast } = useToast();
@@ -95,6 +113,9 @@ export default function BulkAdjustmentsImport() {
   const [fileName, setFileName] = useState("");
   const [validationRows, setValidationRows] = useState<ValidationRow[]>([]);
   const [applyToAllSimilar, setApplyToAllSimilar] = useState(false);
+  const [leaveFileName, setLeaveFileName] = useState("");
+  const [leaveRows, setLeaveRows] = useState<LeaveImportRow[]>([]);
+  const [leaveInvalidRows, setLeaveInvalidRows] = useState<InvalidRow[]>([]);
 
   const [filters, setFilters] = useState({ startDate: "", endDate: "", employeeCode: "", type: "all" });
   const adjustmentsFilters = {
@@ -408,6 +429,105 @@ export default function BulkAdjustmentsImport() {
     setValidationRows(nextValidation);
   };
 
+  const handleLeaveFile = async (file: File) => {
+    setLeaveFileName(file.name);
+    const buffer = await file.arrayBuffer();
+    const workbook = XLSX.read(buffer, { type: "array" });
+    const sheetName = workbook.SheetNames[0];
+    const sheet = workbook.Sheets[sheetName];
+    const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "" }) as unknown[][];
+    const headerRow = rows[0] || [];
+    const headers = headerRow.map((cell) => String(cell).trim());
+    const headerMatch = LEAVE_HEADERS.every((header, index) => headers[index] === header);
+    if (!headerMatch) {
+      toast({ title: "خطأ", description: "تأكد من عناوين الأعمدة المطلوبة في ملف الإجازات.", variant: "destructive" });
+      setLeaveRows([]);
+      setLeaveInvalidRows([{ rowIndex: 1, reason: "عناوين الأعمدة غير مطابقة" }]);
+      return;
+    }
+
+    const nextRows: LeaveImportRow[] = [];
+    const nextInvalid: InvalidRow[] = [];
+    rows.slice(1).forEach((row, index) => {
+      const rowIndex = index + 2;
+      const [code, name, dateRaw, typeRaw, noteRaw] = row;
+      const employeeCode = String(code ?? "").trim();
+      const employeeName = String(name ?? "").trim();
+      const date = normalizeDate(dateRaw);
+      const type = String(typeRaw ?? "").trim();
+      const note = String(noteRaw ?? "").trim();
+
+      if (!employeeCode) {
+        nextInvalid.push({ rowIndex, reason: "كود الموظف مفقود" });
+        return;
+      }
+      if (!employeeCodes.has(employeeCode)) {
+        nextInvalid.push({ rowIndex, reason: "كود الموظف غير موجود" });
+        return;
+      }
+      if (!date) {
+        nextInvalid.push({ rowIndex, reason: "التاريخ غير صالح" });
+        return;
+      }
+      if (!LEAVE_TYPES.includes(type)) {
+        nextInvalid.push({ rowIndex, reason: "نوع غير مسموح" });
+        return;
+      }
+
+      nextRows.push({
+        rowIndex,
+        employeeCode,
+        employeeName,
+        date,
+        type: type as LeaveImportRow["type"],
+        note,
+      });
+    });
+
+    setLeaveRows(nextRows);
+    setLeaveInvalidRows(nextInvalid);
+  };
+
+  const handleLeaveImport = () => {
+    if (leaveRows.length === 0) {
+      toast({ title: "تنبيه", description: "لا توجد بيانات صالحة للاستيراد.", variant: "destructive" });
+      return;
+    }
+    const map = new Map<string, any>();
+    let maxId = adjustmentsState.reduce((max, adj) => Math.max(max, adj.id || 0), 0);
+    adjustmentsState.forEach((adj) => {
+      map.set(`${adj.employeeCode}__${adj.date}__${adj.type}`, adj);
+    });
+
+    leaveRows.forEach((row) => {
+      const key = `${row.employeeCode}__${row.date}__${row.type}`;
+      if (map.has(key)) {
+        const existing = map.get(key);
+        map.set(key, {
+          ...existing,
+          note: row.note || existing.note || null,
+          sourceFileName: leaveFileName || existing.sourceFileName,
+        });
+      } else {
+        maxId += 1;
+        map.set(key, {
+          id: maxId,
+          employeeCode: row.employeeCode,
+          date: row.date,
+          type: row.type,
+          fromTime: "00:00:00",
+          toTime: "23:59:59",
+          source: "excel",
+          sourceFileName: leaveFileName || null,
+          note: row.note || null,
+        });
+      }
+    });
+
+    setAdjustments(Array.from(map.values()));
+    toast({ title: "تم الاستيراد", description: `تم حفظ ${leaveRows.length} سجل بنجاح.` });
+  };
+
   const handleImport = () => {
     const needsReview = validationRows.some((row) => row.status === "Needs Review");
     if (needsReview) {
@@ -591,6 +711,76 @@ export default function BulkAdjustmentsImport() {
                             <td className="py-2 px-2">{statusBadge(row.status)}</td>
                             <td className="py-2 px-2 text-muted-foreground">{row.reason || "-"}</td>
                           </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-white rounded-2xl border border-border/50 shadow-sm p-6 space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center gap-4 justify-between">
+                <div>
+                  <h2 className="text-lg font-semibold">استيراد إجازات بالخصم / غياب بعذر</h2>
+                  <p className="text-sm text-muted-foreground">استخدم الأعمدة: الكود، الاسم، التاريخ، النوع، ملاحظة.</p>
+                </div>
+                <div className="flex items-center gap-3">
+                  <Input
+                    type="file"
+                    accept=".xlsx,.xls"
+                    onChange={(event) => {
+                      const file = event.target.files?.[0];
+                      if (file) handleLeaveFile(file);
+                    }}
+                  />
+                  <Button onClick={handleLeaveImport}>حفظ الإجازات</Button>
+                </div>
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="bg-slate-50 border border-border/50 rounded-xl p-4">
+                  <h3 className="font-semibold mb-2">الصفوف الصالحة</h3>
+                  <div className="max-h-60 overflow-auto text-sm">
+                    {leaveRows.length === 0 ? (
+                      <p className="text-muted-foreground">لا توجد بيانات صالحة بعد.</p>
+                    ) : (
+                      <table className="w-full text-right text-xs">
+                        <thead className="sticky top-0 bg-slate-50">
+                          <tr>
+                            <th className="py-1">الصف</th>
+                            <th className="py-1">الكود</th>
+                            <th className="py-1">التاريخ</th>
+                            <th className="py-1">النوع</th>
+                            <th className="py-1">ملاحظة</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {leaveRows.map((row) => (
+                            <tr key={`${row.employeeCode}-${row.rowIndex}`} className="border-t border-border/30">
+                              <td className="py-1">{row.rowIndex}</td>
+                              <td className="py-1">{row.employeeCode}</td>
+                              <td className="py-1">{row.date}</td>
+                              <td className="py-1">{row.type}</td>
+                              <td className="py-1">{row.note || "-"}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                  </div>
+                </div>
+                <div className="bg-slate-50 border border-border/50 rounded-xl p-4">
+                  <h3 className="font-semibold mb-2">تحقق الاستيراد</h3>
+                  <div className="max-h-60 overflow-auto text-sm">
+                    {leaveInvalidRows.length === 0 ? (
+                      <p className="text-muted-foreground">لا توجد أخطاء حالياً.</p>
+                    ) : (
+                      <ul className="space-y-2">
+                        {leaveInvalidRows.map((row, index) => (
+                          <li key={`${row.rowIndex}-${index}`} className="flex items-center justify-between border border-border/40 rounded-lg p-2">
+                            <span>الصف {row.rowIndex}</span>
+                            <span className="text-red-600">{row.reason}</span>
+                          </li>
                         ))}
                       </tbody>
                     </table>
