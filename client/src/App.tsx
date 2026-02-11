@@ -37,6 +37,7 @@ function Router() {
       <Route path="/rules" component={Rules} />
       <Route path="/adjustments" component={Adjustments} />
       <Route path="/bulk-adjustments" component={BulkAdjustmentsImport} />
+      <Route path="/effects-import" component={BulkAdjustmentsImport} />
       <Route path="/leaves" component={Leaves} />
       <Route path="/backup" component={BackupRestore} />
       <Route component={NotFound} />

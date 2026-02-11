@@ -9,7 +9,7 @@ import type {
   SpecialRule,
 } from "@shared/schema";
 
-export const ADJUSTMENT_TYPES = ["اذن صباحي", "اذن مسائي", "إجازة نص يوم", "مأمورية", "إجازة بالخصم", "غياب بعذر"] as const;
+export const ADJUSTMENT_TYPES = ["اذن صباحي", "اذن مسائي", "إجازة نص يوم", "مأمورية", "إجازة بالخصم", "غياب بعذر", "إجازة من الرصيد"] as const;
 
 export type AdjustmentType = (typeof ADJUSTMENT_TYPES)[number];
 
@@ -510,6 +510,7 @@ export const processAttendanceRecords = ({
       const leaveDeductionAdjustments = dayAdjustments.filter((adj) => adj.type === "إجازة بالخصم");
       const excusedAbsenceAdjustments = dayAdjustments.filter((adj) => adj.type === "غياب بعذر");
       const hasLeaveDeduction = leaveDeductionAdjustments.length > 0;
+      const hasLeaveFromBalance = dayAdjustments.some((adj) => adj.type === "إجازة من الرصيد");
       const hasExcusedAbsence = excusedAbsenceAdjustments.length > 0;
 
       const consumedPunches = consumedPunchesByDate.get(dateStr);
@@ -711,7 +712,7 @@ export const processAttendanceRecords = ({
         const excusedByHalfDayNoPunch = halfDayExcused && !checkIn && !checkOut;
         const excusedByMission = hasMission;
         const excusedDay = excusedByHalfDayNoPunch || excusedByMission;
-        const isExcusedForPenalties = excusedDay || suppressPenalties || hasOvernightStay || hasLeaveDeduction || hasExcusedAbsence;
+        const isExcusedForPenalties = excusedDay || suppressPenalties || hasOvernightStay || hasLeaveDeduction || hasLeaveFromBalance || hasExcusedAbsence;
         let latePenaltyValue = 0;
         let lateMinutes = 0;
 
@@ -736,6 +737,9 @@ export const processAttendanceRecords = ({
         }
         if (hasLeaveDeduction) {
           status = "Leave Deduction";
+        }
+        if (hasLeaveFromBalance) {
+          status = "Leave";
         }
         if (hasExcusedAbsence && !checkIn && !checkOut) {
           status = "Excused Absence";
@@ -835,8 +839,8 @@ export const processAttendanceRecords = ({
         } as AttendanceRecord);
       } else {
         const extraNotes = extraNotesByKey.get(dateStr) || [];
-        const status = hasExcusedAbsence ? "Excused Absence" : hasLeaveDeduction ? "Leave Deduction" : "Absent";
-        const penalties = hasExcusedAbsence || hasLeaveDeduction ? [] : [{ type: "غياب", value: 1 }];
+        const status = hasExcusedAbsence ? "Excused Absence" : hasLeaveDeduction ? "Leave Deduction" : hasLeaveFromBalance ? "Leave" : "Absent";
+        const penalties = hasExcusedAbsence || hasLeaveDeduction || hasLeaveFromBalance ? [] : [{ type: "غياب", value: 1 }];
         records.push({
           id: recordId++,
           employeeCode: employee.code,

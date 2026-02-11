@@ -1,87 +1,59 @@
 import { useMemo, useState } from "react";
+import * as XLSX from "xlsx";
+import { format } from "date-fns";
 import { Sidebar } from "@/components/Sidebar";
 import { Header } from "@/components/Header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Checkbox } from "@/components/ui/checkbox";
-import { useEmployees } from "@/hooks/use-employees";
-import { useAdjustments, useImportAdjustments } from "@/hooks/use-data";
 import { useToast } from "@/hooks/use-toast";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { format } from "date-fns";
-import * as XLSX from "xlsx";
+import { useEmployees } from "@/hooks/use-employees";
 import { useAttendanceStore } from "@/store/attendanceStore";
 import { resolveShiftForDate, secondsToHms, timeStringToSeconds } from "@/engine/attendanceEngine";
+import type { InsertAdjustment, InsertLeave } from "@shared/schema";
 
-const EXPECTED_HEADERS = ["الكود", "الاسم", "التاريخ", "من", "الي", "النوع"];
-const ALLOWED_TYPES = ["اذن صباحي", "اذن مسائي", "إجازة نص يوم", "إجازة نص يوم صباح", "إجازة نص يوم مساء", "مأمورية"];
-const FILTER_TYPES = ["اذن صباحي", "اذن مسائي", "إجازة نص يوم", "مأمورية", "إجازة بالخصم", "غياب بعذر"];
-const NORMALIZED_HALF_DAY_TYPE = "إجازة نص يوم";
-const LEAVE_HEADERS = ["الكود", "الاسم", "التاريخ", "النوع", "ملاحظة"];
-const LEAVE_TYPES = ["إجازة بالخصم", "غياب بعذر"];
+const EFFECT_HEADERS = ["الكود", "الاسم", "التاريخ", "من", "إلى", "النوع", "الحالة", "ملاحظة"];
+const SUPPORTED_TYPES = [
+  "مأمورية",
+  "إذن صباحي",
+  "إذن مسائي",
+  "إذن (عام)",
+  "إجازة نصف يوم",
+  "إجازة من الرصيد",
+  "إجازة بالخصم",
+  "إجازة رسمية",
+  "إجازة تحصيل",
+  "غياب بعذر",
+] as const;
 
-const DEFAULT_TIMEZONE_OFFSET_MINUTES = -120;
+type SupportedType = (typeof SUPPORTED_TYPES)[number];
+type RowStatus = "Valid" | "Auto-filled" | "Auto-inferred" | "Invalid";
 
-type ImportRow = {
+type ParsedEffectRow = {
   rowIndex: number;
   employeeCode: string;
   employeeName: string;
   date: string;
   fromTime: string;
   toTime: string;
-  type: string;
-};
-
-type AdjustmentStatus = "Valid" | "Auto-filled" | "Auto-inferred" | "Needs Review" | "Invalid";
-
-type ValidationRow = ImportRow & {
-  normalizedType: "اذن صباحي" | "اذن مسائي" | "إجازة نص يوم" | "مأمورية";
-  inferredSide?: "صباح" | "مساء";
-  status: AdjustmentStatus;
-  reason?: string;
-  shiftStart?: string;
-  shiftEnd?: string;
-  needsReview?: boolean;
-};
-
-type LeaveImportRow = {
-  rowIndex: number;
-  employeeCode: string;
-  employeeName: string;
-  date: string;
-  type: "إجازة بالخصم" | "غياب بعذر";
+  type: SupportedType;
+  status: string;
   note: string;
-};
-
-type InvalidRow = {
-  rowIndex: number;
-  reason: string;
-};
-
-const normalizeTime = (value: unknown) => {
-  if (typeof value === "number") {
-    const totalSeconds = Math.round(value * 24 * 60 * 60);
-    return toHms(totalSeconds);
-  }
-  const text = String(value ?? "").trim();
-  if (!text) return "";
-  const [h = "0", m = "0", s = "0"] = text.split(":");
-  return `${String(Number(h)).padStart(2, "0")}:${String(Number(m)).padStart(2, "0")}:${String(Number(s)).padStart(2, "0")}`;
+  normalizedType: string;
+  state: RowStatus;
+  reason?: string;
 };
 
 const toHms = (seconds: number) => {
-  const total = Math.max(0, seconds);
-  const h = String(Math.floor(total / 3600)).padStart(2, "0");
-  const m = String(Math.floor((total % 3600) / 60)).padStart(2, "0");
-  const s = String(total % 60).padStart(2, "0");
+  const clamped = Math.max(0, Math.floor(seconds));
+  const h = String(Math.floor(clamped / 3600)).padStart(2, "0");
+  const m = String(Math.floor((clamped % 3600) / 60)).padStart(2, "0");
+  const s = String(clamped % 60).padStart(2, "0");
   return `${h}:${m}:${s}`;
 };
 
 const normalizeDate = (value: unknown) => {
-  if (value instanceof Date && !Number.isNaN(value.getTime())) {
-    return format(value, "yyyy-MM-dd");
-  }
+  if (value instanceof Date && !Number.isNaN(value.getTime())) return format(value, "yyyy-MM-dd");
   if (typeof value === "number") {
     const parsed = XLSX.SSF.parse_date_code(value);
     if (parsed) {
@@ -92,39 +64,54 @@ const normalizeDate = (value: unknown) => {
   const text = String(value ?? "").trim();
   if (!text) return "";
   const parsed = new Date(text);
-  if (!Number.isNaN(parsed.getTime())) {
-    return format(parsed, "yyyy-MM-dd");
+  return Number.isNaN(parsed.getTime()) ? "" : format(parsed, "yyyy-MM-dd");
+};
+
+const normalizeTime = (value: unknown) => {
+  if (typeof value === "number") {
+    return toHms(Math.round(value * 24 * 60 * 60));
   }
-  return "";
+  const text = String(value ?? "").trim();
+  if (!text) return "";
+  const [h = "0", m = "0", s = "0"] = text.split(":");
+  return `${String(Number(h)).padStart(2, "0")}:${String(Number(m)).padStart(2, "0")}:${String(Number(s)).padStart(2, "0")}`;
+};
+
+const LOCAL_OFFSET_MINUTES = -120;
+const toLocalDateKey = (date: Date) => {
+  const shifted = new Date(date.getTime() - LOCAL_OFFSET_MINUTES * 60 * 1000);
+  const y = shifted.getUTCFullYear();
+  const m = String(shifted.getUTCMonth() + 1).padStart(2, "0");
+  const d = String(shifted.getUTCDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
 };
 
 export default function BulkAdjustmentsImport() {
   const { data: employees } = useEmployees();
-  const employeeCodes = useMemo(() => new Set(employees?.map((emp) => emp.code) || []), [employees]);
-  const employeesByCode = useMemo(() => new Map(employees?.map((emp) => [emp.code, emp]) || []), [employees]);
-  const punches = useAttendanceStore((state) => state.punches);
-  const rules = useAttendanceStore((state) => state.rules);
-  const adjustmentsState = useAttendanceStore((state) => state.adjustments);
-  const setAdjustments = useAttendanceStore((state) => state.setAdjustments);
-  const config = useAttendanceStore((state) => state.config);
-  const importAdjustments = useImportAdjustments();
+  const rules = useAttendanceStore((s) => s.rules);
+  const punches = useAttendanceStore((s) => s.punches);
+  const adjustments = useAttendanceStore((s) => s.adjustments);
+  const leaves = useAttendanceStore((s) => s.leaves);
+  const setAdjustments = useAttendanceStore((s) => s.setAdjustments);
+  const setLeaves = useAttendanceStore((s) => s.setLeaves);
+  const config = useAttendanceStore((s) => s.config);
   const { toast } = useToast();
 
-  const [fileName, setFileName] = useState("");
-  const [validationRows, setValidationRows] = useState<ValidationRow[]>([]);
-  const [applyToAllSimilar, setApplyToAllSimilar] = useState(false);
-  const [leaveFileName, setLeaveFileName] = useState("");
-  const [leaveRows, setLeaveRows] = useState<LeaveImportRow[]>([]);
-  const [leaveInvalidRows, setLeaveInvalidRows] = useState<InvalidRow[]>([]);
+  const employeeMap = useMemo(() => new Map((employees || []).map((e) => [e.code, e])), [employees]);
 
-  const [filters, setFilters] = useState({ startDate: "", endDate: "", employeeCode: "", type: "all" });
-  const adjustmentsFilters = {
-    startDate: filters.startDate || undefined,
-    endDate: filters.endDate || undefined,
-    employeeCode: filters.employeeCode || undefined,
-    type: filters.type !== "all" ? filters.type : undefined,
+  const [fileName, setFileName] = useState("");
+  const [rows, setRows] = useState<ParsedEffectRow[]>([]);
+
+  const inferGenericSide = (employeeCode: string, date: string, shiftStartSec: number) => {
+    const dayPunches = punches
+      .filter((p) => p.employeeCode === employeeCode && toLocalDateKey(p.punchDatetime) === date)
+      .sort((a, b) => a.punchDatetime.getTime() - b.punchDatetime.getTime());
+    const checkIn = dayPunches[0];
+    if (!checkIn) return "مسائي" as const;
+    const local = new Date(checkIn.punchDatetime.getTime() - LOCAL_OFFSET_MINUTES * 60 * 1000);
+    const checkInSec = local.getUTCHours() * 3600 + local.getUTCMinutes() * 60 + local.getUTCSeconds();
+    return checkInSec >= shiftStartSec + 2 * 3600 ? "صباحي" : "مسائي";
   };
-  const { data: adjustments } = useAdjustments(adjustmentsFilters);
 
   const normalizeHalfDaySide = (type: string) => {
     if (type.includes("صباح")) return "صباح";
@@ -185,384 +172,189 @@ export default function BulkAdjustmentsImport() {
 
   const handleFile = async (file: File) => {
     setFileName(file.name);
-    const buffer = await file.arrayBuffer();
-    const workbook = XLSX.read(buffer, { type: "array" });
-    const sheetName = workbook.SheetNames[0];
-    const sheet = workbook.Sheets[sheetName];
-    const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "" }) as unknown[][];
-    const headerRow = rows[0] || [];
-    const headers = headerRow.map((cell) => String(cell).trim());
-    const headerMatch = EXPECTED_HEADERS.every((header, index) => headers[index] === header);
-    if (!headerMatch) {
-      toast({ title: "خطأ", description: "تأكد من عناوين الأعمدة العربية المطلوبة بالترتيب الصحيح.", variant: "destructive" });
-      setValidationRows([{
-        rowIndex: 1,
-        employeeCode: "-",
-        employeeName: "-",
-        date: "",
-        fromTime: "",
-        toTime: "",
-        type: "",
-        normalizedType: "اذن صباحي",
-        status: "Invalid",
-        reason: "عناوين الأعمدة غير مطابقة",
-      }]);
+    const workbook = XLSX.read(await file.arrayBuffer(), { type: "array" });
+    const ws = workbook.Sheets[workbook.SheetNames[0]];
+    const rawRows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" }) as unknown[][];
+    const headers = (rawRows[0] || []).map((h) => String(h).trim());
+    const match = EFFECT_HEADERS.every((header, i) => headers[i] === header);
+    if (!match) {
+      toast({ title: "خطأ", description: "رأس الملف غير مطابق لقالب المؤثرات الموحد.", variant: "destructive" });
+      setRows([]);
       return;
     }
 
-    const nextValidation: ValidationRow[] = [];
     const permissionMinutes = config.defaultPermissionMinutes || 120;
     const halfDayMinutes = config.defaultHalfDayMinutes || 240;
-    const defaultHalfDaySide = config.defaultHalfDaySide || "صباح";
 
-    rows.slice(1).forEach((row, index) => {
-      const rowIndex = index + 2;
-      const [code, name, dateRaw, fromRaw, toRaw, typeRaw] = row;
-      const employeeCode = String(code ?? "").trim();
-      const employeeName = String(name ?? "").trim();
-      const date = normalizeDate(dateRaw);
-      const fromTime = normalizeTime(fromRaw);
-      const toTime = normalizeTime(toRaw);
-      const type = String(typeRaw ?? "").trim();
-      const normalizedType = type.startsWith("إجازة نص يوم") ? NORMALIZED_HALF_DAY_TYPE : type;
-      const halfDaySideFromType = normalizeHalfDaySide(type);
-      const employee = employeesByCode.get(employeeCode);
+    const parsed: ParsedEffectRow[] = rawRows.slice(1).map((raw, idx) => {
+      const rowIndex = idx + 2;
+      const employeeCode = String(raw[0] ?? "").trim();
+      const employeeName = String(raw[1] ?? "").trim();
+      const date = normalizeDate(raw[2]);
+      let fromTime = normalizeTime(raw[3]);
+      let toTime = normalizeTime(raw[4]);
+      const typeText = String(raw[5] ?? "").trim() as SupportedType;
+      const status = String(raw[6] ?? "").trim();
+      const note = String(raw[7] ?? "").trim();
 
-      if (!employeeCode) {
-        nextValidation.push({
-          rowIndex,
-          employeeCode,
-          employeeName,
-          date,
-          fromTime,
-          toTime,
-          type,
-          normalizedType: "اذن صباحي",
-          status: "Invalid",
-          reason: "كود الموظف مفقود",
-        });
-        return;
-      }
-      if (!employeeCodes.has(employeeCode)) {
-        nextValidation.push({
-          rowIndex,
-          employeeCode,
-          employeeName,
-          date,
-          fromTime,
-          toTime,
-          type,
-          normalizedType: "اذن صباحي",
-          status: "Invalid",
-          reason: "كود الموظف غير موجود",
-        });
-        return;
-      }
-      if (!date) {
-        nextValidation.push({
-          rowIndex,
-          employeeCode,
-          employeeName,
-          date,
-          fromTime,
-          toTime,
-          type,
-          normalizedType: "اذن صباحي",
-          status: "Invalid",
-          reason: "التاريخ غير صالح",
-        });
-        return;
-      }
-      if (!ALLOWED_TYPES.includes(type)) {
-        nextValidation.push({
-          rowIndex,
-          employeeCode,
-          employeeName,
-          date,
-          fromTime,
-          toTime,
-          type,
-          normalizedType: "اذن صباحي",
-          status: "Invalid",
-          reason: "نوع غير مسموح",
-        });
-        return;
-      }
-      if (!employee) {
-        nextValidation.push({
-          rowIndex,
-          employeeCode,
-          employeeName,
-          date,
-          fromTime,
-          toTime,
-          type,
-          normalizedType: normalizedType as ValidationRow["normalizedType"],
-          status: "Invalid",
-          reason: "بيانات الموظف غير مكتملة",
-        });
-        return;
-      }
-
-      const { shiftStart, shiftEnd } = resolveShiftForDate({ employee, dateStr: date, rules });
-      const hasFrom = Boolean(fromTime);
-      const hasTo = Boolean(toTime);
-      let nextFrom = fromTime;
-      let nextTo = toTime;
-      let status: AdjustmentStatus = "Valid";
-      let reason: string | undefined;
-      let inferredSide: "صباح" | "مساء" | undefined;
-      let needsReview = false;
-
-      if (normalizedType === "مأمورية") {
-        if (!hasFrom || !hasTo) {
-          status = "Invalid";
-          reason = "المأمورية يجب أن تحتوي على من / إلى";
-        }
-      }
-
-      if (status !== "Invalid" && (!hasFrom || !hasTo)) {
-        if (normalizedType === "اذن صباحي") {
-          const range = buildRangeFromShift({
-            shiftStart,
-            shiftEnd,
-            durationMinutes: permissionMinutes,
-            side: "صباح",
-          });
-          nextFrom = range.fromTime;
-          nextTo = range.toTime;
-          status = "Auto-filled";
-          inferredSide = "صباح";
-        } else if (normalizedType === "اذن مسائي") {
-          const range = buildRangeFromShift({
-            shiftStart,
-            shiftEnd,
-            durationMinutes: permissionMinutes,
-            side: "مساء",
-          });
-          nextFrom = range.fromTime;
-          nextTo = range.toTime;
-          status = "Auto-filled";
-          inferredSide = "مساء";
-        } else if (normalizedType === NORMALIZED_HALF_DAY_TYPE) {
-          if (halfDaySideFromType) {
-            const range = buildRangeFromShift({
-              shiftStart,
-              shiftEnd,
-              durationMinutes: halfDayMinutes,
-              side: halfDaySideFromType,
-            });
-            nextFrom = range.fromTime;
-            nextTo = range.toTime;
-            status = "Auto-filled";
-            inferredSide = halfDaySideFromType;
-          } else {
-            const { checkInSeconds, checkOutSeconds } = getPunchesForEmployeeDate(employeeCode, date);
-            const shiftStartSeconds = timeStringToSeconds(shiftStart);
-            const shiftEndSeconds = timeStringToSeconds(shiftEnd);
-            const shiftDuration = Math.max(0, shiftEndSeconds - shiftStartSeconds);
-            const midShiftSeconds = shiftStartSeconds + shiftDuration / 2;
-
-            if (checkInSeconds !== null && checkInSeconds >= midShiftSeconds) {
-              const range = buildRangeFromShift({
-                shiftStart,
-                shiftEnd,
-                durationMinutes: halfDayMinutes,
-                side: "صباح",
-              });
-              nextFrom = range.fromTime;
-              nextTo = range.toTime;
-              status = "Auto-inferred";
-              inferredSide = "صباح";
-            } else if (checkOutSeconds !== null && checkOutSeconds <= midShiftSeconds) {
-              const range = buildRangeFromShift({
-                shiftStart,
-                shiftEnd,
-                durationMinutes: halfDayMinutes,
-                side: "مساء",
-              });
-              nextFrom = range.fromTime;
-              nextTo = range.toTime;
-              status = "Auto-inferred";
-              inferredSide = "مساء";
-            } else {
-              status = "Needs Review";
-              inferredSide = defaultHalfDaySide;
-              reason = "يتطلب تحديد نصف اليوم بناءً على البصمات";
-              needsReview = true;
-            }
-          }
-        } else {
-          status = "Invalid";
-          reason = "وقت البداية أو النهاية غير صالح";
-        }
-      }
-
-      if (status !== "Invalid" && (!nextFrom || !nextTo)) {
-        status = "Invalid";
-        reason = "وقت البداية أو النهاية غير صالح";
-      }
-
-      if (status !== "Invalid" && nextFrom && nextTo && nextFrom >= nextTo) {
-        status = "Invalid";
-        reason = "وقت البداية يجب أن يكون قبل النهاية";
-      }
-
-      nextValidation.push({
+      const base: ParsedEffectRow = {
         rowIndex,
         employeeCode,
         employeeName,
         date,
-        fromTime: nextFrom,
-        toTime: nextTo,
-        type,
-        normalizedType: normalizedType as ValidationRow["normalizedType"],
+        fromTime,
+        toTime,
+        type: typeText,
         status,
-        reason,
-        inferredSide,
-        shiftStart,
-        shiftEnd,
-        needsReview,
-      });
-    });
-
-    setValidationRows(nextValidation);
-  };
-
-  const handleLeaveFile = async (file: File) => {
-    setLeaveFileName(file.name);
-    const buffer = await file.arrayBuffer();
-    const workbook = XLSX.read(buffer, { type: "array" });
-    const sheetName = workbook.SheetNames[0];
-    const sheet = workbook.Sheets[sheetName];
-    const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "" }) as unknown[][];
-    const headerRow = rows[0] || [];
-    const headers = headerRow.map((cell) => String(cell).trim());
-    const headerMatch = LEAVE_HEADERS.every((header, index) => headers[index] === header);
-    if (!headerMatch) {
-      toast({ title: "خطأ", description: "تأكد من عناوين الأعمدة المطلوبة في ملف الإجازات.", variant: "destructive" });
-      setLeaveRows([]);
-      setLeaveInvalidRows([{ rowIndex: 1, reason: "عناوين الأعمدة غير مطابقة" }]);
-      return;
-    }
-
-    const nextRows: LeaveImportRow[] = [];
-    const nextInvalid: InvalidRow[] = [];
-    rows.slice(1).forEach((row, index) => {
-      const rowIndex = index + 2;
-      const [code, name, dateRaw, typeRaw, noteRaw] = row;
-      const employeeCode = String(code ?? "").trim();
-      const employeeName = String(name ?? "").trim();
-      const date = normalizeDate(dateRaw);
-      const type = String(typeRaw ?? "").trim();
-      const note = String(noteRaw ?? "").trim();
-
-      if (!employeeCode) {
-        nextInvalid.push({ rowIndex, reason: "كود الموظف مفقود" });
-        return;
-      }
-      if (!employeeCodes.has(employeeCode)) {
-        nextInvalid.push({ rowIndex, reason: "كود الموظف غير موجود" });
-        return;
-      }
-      if (!date) {
-        nextInvalid.push({ rowIndex, reason: "التاريخ غير صالح" });
-        return;
-      }
-      if (!LEAVE_TYPES.includes(type)) {
-        nextInvalid.push({ rowIndex, reason: "نوع غير مسموح" });
-        return;
-      }
-
-      nextRows.push({
-        rowIndex,
-        employeeCode,
-        employeeName,
-        date,
-        type: type as LeaveImportRow["type"],
         note,
-      });
-    });
+        normalizedType: typeText,
+        state: "Valid",
+      };
 
-    setLeaveRows(nextRows);
-    setLeaveInvalidRows(nextInvalid);
-  };
+      if (!employeeCode) return { ...base, state: "Invalid", reason: "الكود مطلوب" };
+      if (!employeeMap.has(employeeCode)) return { ...base, state: "Invalid", reason: "كود موظف غير معروف" };
+      if (!date) return { ...base, state: "Invalid", reason: "تاريخ غير صالح" };
+      if (!SUPPORTED_TYPES.includes(typeText)) return { ...base, state: "Invalid", reason: "نوع مؤثر غير مدعوم" };
 
-  const handleLeaveImport = () => {
-    if (leaveRows.length === 0) {
-      toast({ title: "تنبيه", description: "لا توجد بيانات صالحة للاستيراد.", variant: "destructive" });
-      return;
-    }
-    const map = new Map<string, any>();
-    let maxId = adjustmentsState.reduce((max, adj) => Math.max(max, adj.id || 0), 0);
-    adjustmentsState.forEach((adj) => {
-      map.set(`${adj.employeeCode}__${adj.date}__${adj.type}`, adj);
-    });
+      const emp = employeeMap.get(employeeCode)!;
+      const shift = resolveShiftForDate({ employee: emp, dateStr: date, rules });
+      const shiftStartSec = timeStringToSeconds(shift.shiftStart);
+      const shiftEndSec = timeStringToSeconds(shift.shiftEnd);
 
-    leaveRows.forEach((row) => {
-      const key = `${row.employeeCode}__${row.date}__${row.type}`;
-      if (map.has(key)) {
-        const existing = map.get(key);
-        map.set(key, {
-          ...existing,
-          note: row.note || existing.note || null,
-          sourceFileName: leaveFileName || existing.sourceFileName,
-        });
-      } else {
-        maxId += 1;
-        map.set(key, {
-          id: maxId,
-          employeeCode: row.employeeCode,
-          date: row.date,
-          type: row.type,
-          fromTime: "00:00:00",
-          toTime: "23:59:59",
-          source: "excel",
-          sourceFileName: leaveFileName || null,
-          note: row.note || null,
-        });
+      if (typeText === "مأمورية") {
+        if (!fromTime || !toTime) return { ...base, state: "Invalid", reason: "المأمورية يجب أن تحتوي على من / إلى" };
       }
+
+      if (typeText === "إذن صباحي" && (!fromTime || !toTime)) {
+        fromTime = secondsToHms(shiftStartSec);
+        toTime = secondsToHms(shiftStartSec + permissionMinutes * 60);
+        return { ...base, fromTime, toTime, normalizedType: "اذن صباحي", state: "Auto-filled" };
+      }
+      if (typeText === "إذن مسائي" && (!fromTime || !toTime)) {
+        fromTime = secondsToHms(shiftEndSec - permissionMinutes * 60);
+        toTime = secondsToHms(shiftEndSec);
+        return { ...base, fromTime, toTime, normalizedType: "اذن مسائي", state: "Auto-filled" };
+      }
+      if (typeText === "إذن (عام)") {
+        if (!fromTime || !toTime) {
+          const inferred = inferGenericSide(employeeCode, date, shiftStartSec);
+          if (inferred === "صباحي") {
+            fromTime = secondsToHms(shiftStartSec);
+            toTime = secondsToHms(shiftStartSec + permissionMinutes * 60);
+            return { ...base, fromTime, toTime, normalizedType: "اذن صباحي", state: "Auto-inferred" };
+          }
+          fromTime = secondsToHms(shiftEndSec - permissionMinutes * 60);
+          toTime = secondsToHms(shiftEndSec);
+          return { ...base, fromTime, toTime, normalizedType: "اذن مسائي", state: "Auto-inferred" };
+        }
+        const fromSec = timeStringToSeconds(fromTime);
+        const toSec = timeStringToSeconds(toTime);
+        const distanceStart = Math.abs(fromSec - shiftStartSec) + Math.abs(toSec - (shiftStartSec + permissionMinutes * 60));
+        const distanceEnd = Math.abs(fromSec - (shiftEndSec - permissionMinutes * 60)) + Math.abs(toSec - shiftEndSec);
+        return { ...base, normalizedType: distanceStart <= distanceEnd ? "اذن صباحي" : "اذن مسائي" };
+      }
+
+      if (typeText === "إجازة نصف يوم") {
+        if (!fromTime || !toTime) {
+          const inferred = inferGenericSide(employeeCode, date, shiftStartSec);
+          if (inferred === "صباحي") {
+            fromTime = secondsToHms(shiftStartSec);
+            toTime = secondsToHms(shiftStartSec + halfDayMinutes * 60);
+          } else {
+            fromTime = secondsToHms(shiftEndSec - halfDayMinutes * 60);
+            toTime = secondsToHms(shiftEndSec);
+          }
+          return { ...base, normalizedType: "إجازة نص يوم", fromTime, toTime, state: "Auto-inferred" };
+        }
+        return { ...base, normalizedType: "إجازة نص يوم" };
+      }
+
+      if (["إجازة من الرصيد", "إجازة بالخصم", "غياب بعذر", "إجازة رسمية", "إجازة تحصيل"].includes(typeText)) {
+        return { ...base, fromTime: "00:00:00", toTime: "00:00:00" };
+      }
+
+      return base;
     });
 
-    setAdjustments(Array.from(map.values()));
-    toast({ title: "تم الاستيراد", description: `تم حفظ ${leaveRows.length} سجل بنجاح.` });
+    setRows(parsed);
   };
 
-  const handleImport = () => {
-    const needsReview = validationRows.some((row) => row.status === "Needs Review");
-    if (needsReview) {
-      toast({ title: "تنبيه", description: "يرجى مراجعة الصفوف التي تحتاج تحديد النصف قبل الاستيراد.", variant: "destructive" });
+  const validRows = useMemo(() => rows.filter((r) => r.state !== "Invalid"), [rows]);
+  const invalidRows = useMemo(() => rows.filter((r) => r.state === "Invalid"), [rows]);
+
+  const applyEffects = () => {
+    if (!validRows.length) {
+      toast({ title: "تنبيه", description: "لا توجد صفوف صالحة للتطبيق.", variant: "destructive" });
       return;
     }
-    const readyRows = validationRows.filter((row) => row.status !== "Invalid");
-    if (readyRows.length === 0) {
-      toast({ title: "تنبيه", description: "لا توجد بيانات صالحة للاستيراد.", variant: "destructive" });
-      return;
-    }
-    importAdjustments.mutate({
-      sourceFileName: fileName,
-      rows: readyRows.map((row) => ({
-        rowIndex: row.rowIndex,
+
+    const adjustmentMap = new Map<string, any>();
+    adjustments.forEach((adj) => adjustmentMap.set(`${adj.employeeCode}__${adj.date}__${adj.type}__${adj.fromTime}__${adj.toTime}`, adj));
+
+    const leaveMap = new Map<string, any>();
+    leaves.forEach((leave) => leaveMap.set(`${leave.type}__${leave.scope}__${leave.scopeValue || ""}__${leave.startDate}__${leave.endDate}`, leave));
+
+    let nextAdjustmentId = Math.max(0, ...adjustments.map((a) => a.id || 0)) + 1;
+    let nextLeaveId = Math.max(0, ...leaves.map((l) => l.id || 0)) + 1;
+
+    validRows.forEach((row) => {
+      if (row.type === "إجازة رسمية" || row.type === "إجازة تحصيل") {
+        const leaveRow: InsertLeave = {
+          type: row.type === "إجازة رسمية" ? "official" : "collections",
+          scope: "emp",
+          scopeValue: row.employeeCode,
+          startDate: row.date,
+          endDate: row.date,
+          note: row.note || "",
+          createdAt: new Date(),
+        };
+        const key = `${leaveRow.type}__${leaveRow.scope}__${leaveRow.scopeValue}__${leaveRow.startDate}__${leaveRow.endDate}`;
+        if (!leaveMap.has(key)) {
+          leaveMap.set(key, { id: nextLeaveId++, ...leaveRow });
+        }
+        return;
+      }
+
+      const normalizedType =
+        row.normalizedType === "إذن صباحي" ? "اذن صباحي" :
+        row.normalizedType === "إذن مسائي" ? "اذن مسائي" :
+        row.normalizedType;
+
+      const adjustment: InsertAdjustment = {
         employeeCode: row.employeeCode,
         date: row.date,
-        type: row.normalizedType,
-        fromTime: row.fromTime,
-        toTime: row.toTime,
-        source: "excel",
-        sourceFileName: fileName,
-        note: null,
-      })),
-    }, {
-      onSuccess: (data) => {
-        toast({ title: "تم الاستيراد", description: `تم حفظ ${data.inserted} سجل بنجاح.` });
-        if (data.invalid.length > 0) {
-          toast({ title: "تنبيه", description: `تم تجاهل ${data.invalid.length} سجل غير صالح.`, variant: "destructive" });
-        }
-      },
-      onError: (error: any) => {
-        toast({ title: "خطأ", description: error.message, variant: "destructive" });
-      },
+        fromTime: row.fromTime || "00:00:00",
+        toTime: row.toTime || "00:00:00",
+        type: normalizedType as any,
+        source: "effects_import",
+        sourceFileName: fileName || "effects.xlsx",
+        importedAt: new Date(),
+        note: [row.note, row.status ? `الحالة: ${row.status}` : ""].filter(Boolean).join(" | "),
+      };
+      const key = `${adjustment.employeeCode}__${adjustment.date}__${adjustment.type}__${adjustment.fromTime}__${adjustment.toTime}`;
+      if (!adjustmentMap.has(key)) {
+        adjustmentMap.set(key, { id: nextAdjustmentId++, ...adjustment });
+      }
     });
+
+    setAdjustments(Array.from(adjustmentMap.values()));
+    setLeaves(Array.from(leaveMap.values()));
+    toast({ title: "تم التطبيق", description: `تم تطبيق ${validRows.length} مؤثر بنجاح.` });
+  };
+
+  const exportTemplate = () => {
+    const wb = XLSX.utils.book_new();
+    const data = [
+      EFFECT_HEADERS,
+      ["648", "أحمد علي", "2025-01-05", "09:00:00", "11:00:00", "إذن صباحي", "موافق", "نموذج إذن"],
+      ["648", "أحمد علي", "2025-01-06", "", "", "إجازة نصف يوم", "موافق", "يتم الاستدلال تلقائياً"],
+      ["701", "منى سالم", "2025-01-10", "10:00:00", "14:00:00", "مأمورية", "موافق", "مأمورية خارجية"],
+      ["701", "منى سالم", "2025-01-12", "", "", "إجازة بالخصم", "موافق", ""],
+      ["702", "عمرو محمد", "2025-01-15", "", "", "إجازة رسمية", "نشط", "تعويض يوم عمل"],
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(data);
+    XLSX.utils.book_append_sheet(wb, ws, "Effects");
+    XLSX.writeFile(wb, "effects-template.xlsx");
   };
 
   const statusBadge = (status: AdjustmentStatus) => {
@@ -615,263 +407,91 @@ export default function BulkAdjustmentsImport() {
   }, [validationRows]);
 
   return (
-    <div className="flex h-screen bg-slate-50/50">
+    <div className="min-h-screen bg-slate-50" dir="rtl">
       <Sidebar />
-      <div className="flex-1 flex flex-col overflow-hidden">
-        <Header title="رفع التعديلات" />
-        <main className="flex-1 overflow-y-auto p-8">
-          <div className="max-w-6xl mx-auto space-y-6">
-            <div className="bg-white rounded-2xl border border-border/50 shadow-sm p-6 space-y-4">
-              <div className="flex flex-col sm:flex-row sm:items-center gap-4 justify-between">
-                <div>
-                  <h2 className="text-lg font-semibold">استيراد ملف التعديلات</h2>
-                  <p className="text-sm text-muted-foreground">الرجاء استخدام الأعمدة العربية المطلوبة.</p>
-                </div>
-                <div className="flex items-center gap-3">
-                  <Input
-                    type="file"
-                    accept=".xlsx,.xls"
-                    onChange={(event) => {
-                      const file = event.target.files?.[0];
-                      if (file) handleFile(file);
-                    }}
-                  />
-                  <Button onClick={handleImport} disabled={importAdjustments.isPending}>
-                    {importAdjustments.isPending ? "جاري الاستيراد..." : "حفظ التعديلات"}
-                  </Button>
-                </div>
-              </div>
+      <main className="mr-64 p-6 space-y-6">
+        <Header title="استيراد المؤثرات" subtitle="ملف Excel موحد للتعديلات والإجازات والغياب" />
 
-              <div className="bg-slate-50 border border-border/50 rounded-xl p-4 space-y-4">
-                <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-                  <div>
-                    <h3 className="font-semibold mb-1">جدول التحقق من الاستيراد</h3>
-                    <p className="text-sm text-muted-foreground">راجع الحالات، وأكمل الصفوف التي تحتاج تحديد النصف.</p>
-                  </div>
-                  <div className="flex flex-wrap gap-2 text-xs">
-                    <Badge variant="outline">Valid: {summaryCounts.Valid}</Badge>
-                    <Badge variant="outline">Auto-filled: {summaryCounts["Auto-filled"]}</Badge>
-                    <Badge variant="outline">Auto-inferred: {summaryCounts["Auto-inferred"]}</Badge>
-                    <Badge variant="outline">Needs Review: {summaryCounts["Needs Review"]}</Badge>
-                    <Badge variant="outline">Invalid: {summaryCounts.Invalid}</Badge>
-                  </div>
-                </div>
-                <div className="flex items-center gap-3 text-sm">
-                  <Checkbox
-                    checked={applyToAllSimilar}
-                    onCheckedChange={(value) => setApplyToAllSimilar(Boolean(value))}
-                  />
-                  <span>تطبيق الاختيار على كل الصفوف المشابهة</span>
-                </div>
-                <div className="max-h-[320px] overflow-auto text-sm">
-                  {validationRows.length === 0 ? (
-                    <p className="text-muted-foreground">لا توجد بيانات بعد.</p>
-                  ) : (
-                    <table className="w-full text-right text-xs">
-                      <thead className="sticky top-0 bg-slate-50">
-                        <tr>
-                          <th className="py-2 px-2">الصف</th>
-                          <th className="py-2 px-2">الكود</th>
-                          <th className="py-2 px-2">التاريخ</th>
-                          <th className="py-2 px-2">النوع</th>
-                          <th className="py-2 px-2">النصف</th>
-                          <th className="py-2 px-2">من</th>
-                          <th className="py-2 px-2">إلى</th>
-                          <th className="py-2 px-2">الحالة</th>
-                          <th className="py-2 px-2">السبب</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {validationRows.map((row) => (
-                          <tr key={`${row.employeeCode}-${row.rowIndex}`} className="border-t border-border/30">
-                            <td className="py-2 px-2">{row.rowIndex}</td>
-                            <td className="py-2 px-2">{row.employeeCode}</td>
-                            <td className="py-2 px-2">{row.date || "-"}</td>
-                            <td className="py-2 px-2">{row.type || "-"}</td>
-                            <td className="py-2 px-2">
-                              {row.status === "Needs Review" ? (
-                                <Select
-                                  value={row.inferredSide}
-                                  onValueChange={(value) => updateReviewSide(row.rowIndex, value as "صباح" | "مساء", applyToAllSimilar)}
-                                >
-                                  <SelectTrigger className="h-7 text-xs w-24">
-                                    <SelectValue />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    <SelectItem value="صباح">صباح</SelectItem>
-                                    <SelectItem value="مساء">مساء</SelectItem>
-                                  </SelectContent>
-                                </Select>
-                              ) : (
-                                row.inferredSide || "-"
-                              )}
-                            </td>
-                            <td className="py-2 px-2">{row.fromTime || "-"}</td>
-                            <td className="py-2 px-2">{row.toTime || "-"}</td>
-                            <td className="py-2 px-2">{statusBadge(row.status)}</td>
-                            <td className="py-2 px-2 text-muted-foreground">{row.reason || "-"}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  )}
-                </div>
-              </div>
+        <div className="bg-white rounded-2xl border border-border/50 shadow-sm p-6 space-y-4">
+          <div className="flex flex-wrap items-center gap-3">
+            <Input type="file" accept=".xlsx,.xls" className="max-w-sm" onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])} />
+            <Button variant="outline" onClick={exportTemplate}>تصدير قالب المؤثرات</Button>
+            <Button onClick={applyEffects}>تطبيق المؤثرات</Button>
+            {fileName && <Badge variant="secondary">{fileName}</Badge>}
+          </div>
+          <p className="text-sm text-muted-foreground">
+            الأعمدة المطلوبة: {EFFECT_HEADERS.join(" | ")}
+          </p>
+        </div>
+
+        <div className="grid lg:grid-cols-2 gap-4">
+          <div className="bg-white rounded-2xl border border-border/50 shadow-sm p-4">
+            <h3 className="font-semibold mb-3">معاينة الصفوف ({rows.length})</h3>
+            <div className="max-h-[420px] overflow-auto">
+              <table className="w-full text-xs text-right">
+                <thead className="sticky top-0 bg-white">
+                  <tr>
+                    <th className="py-2">الصف</th>
+                    <th>الكود</th>
+                    <th>التاريخ</th>
+                    <th>النوع</th>
+                    <th>من</th>
+                    <th>إلى</th>
+                    <th>الحالة</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((row) => (
+                    <tr key={`${row.rowIndex}-${row.employeeCode}-${row.date}`} className="border-t border-border/30">
+                      <td className="py-1">{row.rowIndex}</td>
+                      <td>{row.employeeCode}</td>
+                      <td>{row.date || "-"}</td>
+                      <td>{row.type}</td>
+                      <td>{row.fromTime || "-"}</td>
+                      <td>{row.toTime || "-"}</td>
+                      <td>
+                        <Badge variant={row.state === "Invalid" ? "destructive" : "secondary"}>{row.state}</Badge>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
+          </div>
 
-            <div className="bg-white rounded-2xl border border-border/50 shadow-sm p-6 space-y-4">
-              <div className="flex flex-col sm:flex-row sm:items-center gap-4 justify-between">
-                <div>
-                  <h2 className="text-lg font-semibold">استيراد إجازات بالخصم / غياب بعذر</h2>
-                  <p className="text-sm text-muted-foreground">استخدم الأعمدة: الكود، الاسم، التاريخ، النوع، ملاحظة.</p>
-                </div>
-                <div className="flex items-center gap-3">
-                  <Input
-                    type="file"
-                    accept=".xlsx,.xls"
-                    onChange={(event) => {
-                      const file = event.target.files?.[0];
-                      if (file) handleLeaveFile(file);
-                    }}
-                  />
-                  <Button onClick={handleLeaveImport}>حفظ الإجازات</Button>
-                </div>
-              </div>
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div className="bg-slate-50 border border-border/50 rounded-xl p-4">
-                  <h3 className="font-semibold mb-2">الصفوف الصالحة</h3>
-                  <div className="max-h-60 overflow-auto text-sm">
-                    {leaveRows.length === 0 ? (
-                      <p className="text-muted-foreground">لا توجد بيانات صالحة بعد.</p>
-                    ) : (
-                      <table className="w-full text-right text-xs">
-                        <thead className="sticky top-0 bg-slate-50">
-                          <tr>
-                            <th className="py-1">الصف</th>
-                            <th className="py-1">الكود</th>
-                            <th className="py-1">التاريخ</th>
-                            <th className="py-1">النوع</th>
-                            <th className="py-1">ملاحظة</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {leaveRows.map((row) => (
-                            <tr key={`${row.employeeCode}-${row.rowIndex}`} className="border-t border-border/30">
-                              <td className="py-1">{row.rowIndex}</td>
-                              <td className="py-1">{row.employeeCode}</td>
-                              <td className="py-1">{row.date}</td>
-                              <td className="py-1">{row.type}</td>
-                              <td className="py-1">{row.note || "-"}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    )}
-                  </div>
-                </div>
-                <div className="bg-slate-50 border border-border/50 rounded-xl p-4">
-                  <h3 className="font-semibold mb-2">تحقق الاستيراد</h3>
-                  <div className="max-h-60 overflow-auto text-sm">
-                    {leaveInvalidRows.length === 0 ? (
-                      <p className="text-muted-foreground">لا توجد أخطاء حالياً.</p>
-                    ) : (
-                      <table className="w-full text-right text-xs">
-                        <thead className="sticky top-0 bg-slate-50">
-                          <tr>
-                            <th className="py-1">الصف</th>
-                            <th className="py-1">سبب عدم الصلاحية</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {leaveInvalidRows.map((row, index) => (
-                            <tr key={`${row.rowIndex}-${index}`} className="border-t border-border/30">
-                              <td className="py-1">{row.rowIndex}</td>
-                              <td className="py-1 text-red-600">{row.reason}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    )}
-                  </div>
-                </div>
-              </div>
+          <div className="bg-white rounded-2xl border border-border/50 shadow-sm p-4">
+            <h3 className="font-semibold mb-3">نتيجة التحقق</h3>
+            <div className="space-y-2 mb-3">
+              <p className="text-sm">صالحة: <Badge variant="secondary">{validRows.length}</Badge></p>
+              <p className="text-sm">غير صالحة: <Badge variant="destructive">{invalidRows.length}</Badge></p>
             </div>
-
-            <div className="bg-white rounded-2xl border border-border/50 shadow-sm p-6 space-y-4">
-              <div className="flex flex-col lg:flex-row lg:items-center gap-4 justify-between">
-                <h2 className="text-lg font-semibold">سجلات التعديلات المستوردة</h2>
-                <div className="flex flex-wrap gap-3">
-                  <Input
-                    type="date"
-                    value={filters.startDate}
-                    onChange={(event) => setFilters((prev) => ({ ...prev, startDate: event.target.value }))}
-                  />
-                  <Input
-                    type="date"
-                    value={filters.endDate}
-                    onChange={(event) => setFilters((prev) => ({ ...prev, endDate: event.target.value }))}
-                  />
-                  <Input
-                    placeholder="كود الموظف"
-                    value={filters.employeeCode}
-                    onChange={(event) => setFilters((prev) => ({ ...prev, employeeCode: event.target.value }))}
-                  />
-                  <Select
-                    value={filters.type}
-                    onValueChange={(value) => setFilters((prev) => ({ ...prev, type: value }))}
-                  >
-                    <SelectTrigger className="w-[180px]">
-                      <SelectValue placeholder="النوع" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">كل الأنواع</SelectItem>
-                      {FILTER_TYPES.map((type) => (
-                        <SelectItem key={type} value={type}>{type}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-              <div className="overflow-auto">
-                <table className="w-full text-right text-sm">
-                  <thead className="bg-slate-50">
+            <div className="max-h-[360px] overflow-auto">
+              {invalidRows.length === 0 ? (
+                <p className="text-sm text-muted-foreground">لا توجد أخطاء.</p>
+              ) : (
+                <table className="w-full text-xs text-right">
+                  <thead className="sticky top-0 bg-white">
                     <tr>
-                      <th className="px-4 py-2">الكود</th>
-                      <th className="px-4 py-2">الاسم</th>
-                      <th className="px-4 py-2">التاريخ</th>
-                      <th className="px-4 py-2">من</th>
-                      <th className="px-4 py-2">إلى</th>
-                      <th className="px-4 py-2">النوع</th>
-                      <th className="px-4 py-2">المصدر</th>
+                      <th className="py-2">الصف</th>
+                      <th>الكود</th>
+                      <th>السبب</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {adjustments?.length ? adjustments.map((adj) => (
-                      <tr key={adj.id} className="border-t border-border/40">
-                        <td className="px-4 py-2">{adj.employeeCode}</td>
-                        <td className="px-4 py-2">
-                          {employees?.find((emp) => emp.code === adj.employeeCode)?.nameAr || "-"}
-                        </td>
-                        <td className="px-4 py-2">{adj.date}</td>
-                        <td className="px-4 py-2">{adj.fromTime}</td>
-                        <td className="px-4 py-2">{adj.toTime}</td>
-                        <td className="px-4 py-2">{adj.type}</td>
-                        <td className="px-4 py-2">{adj.source}</td>
+                    {invalidRows.map((row) => (
+                      <tr key={`inv-${row.rowIndex}`} className="border-t border-border/30">
+                        <td className="py-1">{row.rowIndex}</td>
+                        <td>{row.employeeCode || "-"}</td>
+                        <td className="text-red-600">{row.reason}</td>
                       </tr>
-                    )) : (
-                      <tr>
-                        <td colSpan={7} className="px-4 py-6 text-center text-muted-foreground">
-                          لا توجد بيانات حتى الآن.
-                        </td>
-                      </tr>
-                    )}
+                    ))}
                   </tbody>
                 </table>
-              </div>
+              )}
             </div>
           </div>
-        </main>
-      </div>
+        </div>
+      </main>
     </div>
   );
 }
