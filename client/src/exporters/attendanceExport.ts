@@ -1,3 +1,4 @@
+import { format } from "date-fns";
 import type { AttendanceRecord, Employee } from "@shared/schema";
 
 const dayNames = ["أحد", "اثنين", "ثلاثاء", "أربعاء", "خميس", "جمعة", "سبت"];
@@ -5,6 +6,12 @@ const dayNames = ["أحد", "اثنين", "ثلاثاء", "أربعاء", "خم�
 const toExcelTime = (value: Date) => {
   const seconds = value.getHours() * 3600 + value.getMinutes() * 60 + value.getSeconds();
   return seconds / 86400;
+};
+
+const toExcelDateSerial = (value: string) => {
+  const [yearRaw, monthRaw, dayRaw] = value.split("-").map(Number);
+  if (!Number.isFinite(yearRaw) || !Number.isFinite(monthRaw) || !Number.isFinite(dayRaw)) return "";
+  return (Date.UTC(yearRaw, monthRaw - 1, dayRaw) - Date.UTC(1899, 11, 30)) / 86400000;
 };
 
 export type AttendanceExportResult = {
@@ -40,6 +47,9 @@ export const buildAttendanceExportRows = ({
     "انصراف مبكر",
     "سهو بصمة",
     "غياب",
+    "غياب بعذر",
+    "إجازة بالخصم",
+    "فترة الترك",
     "إجمالي الجزاءات",
     "ملاحظات",
   ];
@@ -79,7 +89,16 @@ export const buildAttendanceExportRows = ({
     const isOfficialHoliday = Boolean(record.isOfficialHoliday);
     const isOfficialLeave = isCompDay && record.notes === "Official Leave";
     const isHrLeave = isCompDay && !isOfficialLeave;
-    const dayType = isFriday
+    const leaveDeductionDays = Number(record.leaveDeductionDays || 0);
+    const excusedAbsenceDays = Number(record.excusedAbsenceDays || 0);
+    const terminationPeriodDays = Number(record.terminationPeriodDays || 0);
+    const dayType = terminationPeriodDays > 0
+      ? "فترة ترك"
+      : leaveDeductionDays > 0
+      ? "إجازة بالخصم"
+      : excusedAbsenceDays > 0
+      ? "غياب بعذر"
+      : isFriday
       ? "جمعة"
       : isOfficialHoliday
         ? "إجازة رسمية"
@@ -92,7 +111,13 @@ export const buildAttendanceExportRows = ({
       || (typeof record.totalHours === "number" && record.totalHours > 0)
       || Boolean(record.missionStart && record.missionEnd);
     const workedOnHoliday = record.workedOnOfficialHoliday ?? autoWorkedOnHoliday;
-    const status = isFriday
+    const status = terminationPeriodDays > 0
+      ? "إجازة بالخصم (فترة ترك)"
+      : leaveDeductionDays > 0
+      ? "إجازة بالخصم"
+      : excusedAbsenceDays > 0
+      ? "غياب بعذر"
+      : isFriday
       ? (attendedFriday ? "حضور" : "إجازة")
       : record.status === "Late"
         ? "تأخير"
@@ -162,6 +187,9 @@ export const buildAttendanceExportRows = ({
       isZero(earlyLeaveValue) ? "" : earlyLeaveValue,
       isZero(missingStampValue) ? "" : missingStampValue,
       isZero(absenceValue) ? "" : absenceValue,
+      excusedAbsenceDays > 0 ? excusedAbsenceDays : "",
+      leaveDeductionDays > 0 ? leaveDeductionDays : "",
+      terminationPeriodDays > 0 ? terminationPeriodDays : "",
       isZero(totalPenalties) ? "" : totalPenalties,
       notes,
     ];
@@ -180,6 +208,13 @@ export const buildAttendanceExportRows = ({
       officialHolidayAttendance: 0,
       compDayCredits: 0,
       absenceDays: 0,
+      excusedAbsenceDays: 0,
+      leaveDeductionDays: 0,
+      terminationPeriodDays: 0,
+      compDaysFriday: 0,
+      compDaysOfficial: 0,
+      compDaysTotal: 0,
+      lastPunchDate: "",
       totalLate: 0,
       totalEarlyLeave: 0,
       totalMissingStamp: 0,
@@ -196,6 +231,19 @@ export const buildAttendanceExportRows = ({
     if (dayType === "إجازة رسمية" && !isOfficialHoliday) summary.officialLeaves += 1;
     if (dayType === "إجازة") summary.hrLeaves += 1;
     if (!isFriday && record.status === "Absent") summary.absenceDays += 1;
+    if (excusedAbsenceDays > 0) summary.excusedAbsenceDays += excusedAbsenceDays;
+    if (leaveDeductionDays > 0) summary.leaveDeductionDays += leaveDeductionDays;
+    if (terminationPeriodDays > 0) summary.terminationPeriodDays += terminationPeriodDays;
+    summary.compDaysFriday += Number(record.compDaysFriday || 0);
+    summary.compDaysOfficial += Number(record.compDaysOfficial || 0);
+    summary.compDaysTotal += Number(record.compDaysTotal || 0);
+    if (record.checkIn || record.checkOut) {
+      const candidate = record.checkOut || record.checkIn;
+      if (candidate) {
+        const key = format(candidate, "yyyy-MM-dd");
+        if (!summary.lastPunchDate || key > summary.lastPunchDate) summary.lastPunchDate = key;
+      }
+    }
 
     if (!isFriday && hasPenalties) {
       penalties.forEach((penalty: any) => {
@@ -221,20 +269,26 @@ export const buildAttendanceExportRows = ({
     "عدد أيام الإجازات الرسمية",
     "عدد أيام الإجازات (المحددة)",
     "عدد أيام الغياب",
+    "عدد أيام الغياب بعذر",
+    "عدد أيام الإجازة بالخصم",
+    "فترة الترك",
+    "إجمالي الغياب (بالخصم)",
     "اجمالي الاجازات الرسمية",
     "اجمالي حضور الاجازات الرسمية",
-    "رصيد البدل (يوم بالبدل)",
+    "بدل يوم الجمع",
+    "بدل الإجازات الرسمية",
+    "إجمالي أيام البدل",
     "إجمالي التأخيرات",
     "إجمالي الانصراف المبكر",
     "إجمالي سهو البصمة",
-    "إجمالي الغياب",
     "إجمالي الجزاءات",
+    "آخر يوم بصمة",
   ];
 
   const summaryRows: any[][] = [summaryHeaders];
   Array.from(summaryByEmployee.values()).forEach((summary) => {
-    const summaryAbsenceTotal = summary.absenceDays * 2;
-    const summaryPenaltiesTotal = summary.totalLate + summary.totalEarlyLeave + summary.totalMissingStamp + summaryAbsenceTotal;
+    const summaryAbsenceTotal = summary.absenceDays * 2 + summary.excusedAbsenceDays;
+    const summaryPenaltiesTotal = summary.totalLate + summary.totalEarlyLeave + summary.totalMissingStamp + summaryAbsenceTotal + summary.leaveDeductionDays;
     summaryRows.push([
       summary.code,
       summary.name,
@@ -244,14 +298,20 @@ export const buildAttendanceExportRows = ({
       summary.officialLeaves,
       summary.hrLeaves,
       summary.absenceDays,
+      summary.excusedAbsenceDays,
+      summary.leaveDeductionDays,
+      summary.terminationPeriodDays,
+      summaryAbsenceTotal,
       summary.officialHolidayDays,
       summary.officialHolidayAttendance,
-      summary.compDayCredits,
+      summary.compDaysFriday,
+      summary.compDaysOfficial,
+      summary.compDaysTotal,
       summary.totalLate,
       summary.totalEarlyLeave,
       summary.totalMissingStamp,
-      summaryAbsenceTotal,
       summaryPenaltiesTotal,
+      summary.lastPunchDate ? toExcelDateSerial(summary.lastPunchDate) : "",
     ]);
   });
 

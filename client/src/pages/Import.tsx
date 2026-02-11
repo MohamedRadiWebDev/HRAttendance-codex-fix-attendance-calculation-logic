@@ -2,13 +2,20 @@ import { useState } from "react";
 import { Sidebar } from "@/components/Sidebar";
 import { Header } from "@/components/Header";
 import { Button } from "@/components/ui/button";
-import { Upload, FileType, CheckCircle, AlertCircle } from "lucide-react";
+import { Upload, FileDown, FileType, CheckCircle, AlertCircle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import * as XLSX from 'xlsx';
 import { useImportEmployees, useImportPunches } from "@/hooks/use-employees";
 import { useProcessAttendance } from "@/hooks/use-attendance";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { format, parse, parseISO, isValid } from "date-fns";
+import {
+  buildEmployeesTemplate,
+  buildLeavesTemplate,
+  buildPermissionsTemplate,
+  buildPunchesTemplate,
+  buildRulesTemplate,
+} from "@/exporters/templatesExporter";
 
 export default function Import() {
   const { toast } = useToast();
@@ -216,6 +223,60 @@ export default function Import() {
                     hover:file:bg-primary/20 cursor-pointer max-w-sm mx-auto
                   "
                 />
+              </div>
+            </div>
+
+            <div className="bg-white rounded-2xl border border-border/50 shadow-sm p-8 space-y-6">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center">
+                  <FileDown className="w-5 h-5 text-primary" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold">قوالب جاهزة</h3>
+                  <p className="text-sm text-muted-foreground">تحميل قوالب إكسل تحتوي على الأعمدة المطلوبة وأمثلة جاهزة.</p>
+                </div>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <Button
+                  variant="outline"
+                  className="justify-between"
+                  onClick={() => XLSX.writeFile(buildPunchesTemplate(), "template_punches.xlsx")}
+                >
+                  قالب البصمة
+                  <FileDown className="w-4 h-4" />
+                </Button>
+                <Button
+                  variant="outline"
+                  className="justify-between"
+                  onClick={() => XLSX.writeFile(buildEmployeesTemplate(), "template_employees.xlsx")}
+                >
+                  قالب الموظفين
+                  <FileDown className="w-4 h-4" />
+                </Button>
+                <Button
+                  variant="outline"
+                  className="justify-between"
+                  onClick={() => XLSX.writeFile(buildLeavesTemplate(), "template_leaves.xlsx")}
+                >
+                  قالب الإجازات
+                  <FileDown className="w-4 h-4" />
+                </Button>
+                <Button
+                  variant="outline"
+                  className="justify-between"
+                  onClick={() => XLSX.writeFile(buildPermissionsTemplate(), "template_permissions.xlsx")}
+                >
+                  قالب الأذونات
+                  <FileDown className="w-4 h-4" />
+                </Button>
+                <Button
+                  variant="outline"
+                  className="justify-between"
+                  onClick={() => XLSX.writeFile(buildRulesTemplate(), "template_rules.xlsx")}
+                >
+                  قالب القواعد
+                  <FileDown className="w-4 h-4" />
+                </Button>
               </div>
             </div>
 
