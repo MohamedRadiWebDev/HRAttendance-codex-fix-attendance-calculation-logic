@@ -1,5 +1,6 @@
 import { format } from "date-fns";
 import type { AttendanceRecord, Employee } from "@shared/schema";
+import { parseTimeToSeconds } from "@/lib/datetime";
 
 const dayNames = ["أحد", "اثنين", "ثلاثاء", "أربعاء", "خميس", "جمعة", "سبت"];
 
@@ -12,6 +13,19 @@ const toExcelDateSerial = (value: string) => {
   const [yearRaw, monthRaw, dayRaw] = value.split("-").map(Number);
   if (!Number.isFinite(yearRaw) || !Number.isFinite(monthRaw) || !Number.isFinite(dayRaw)) return "";
   return (Date.UTC(yearRaw, monthRaw - 1, dayRaw) - Date.UTC(1899, 11, 30)) / 86400000;
+};
+
+const toTimeText = (value: unknown) => {
+  if (!value) return "";
+  if (value instanceof Date) {
+    const h = String(value.getHours()).padStart(2, "0");
+    const m = String(value.getMinutes()).padStart(2, "0");
+    const s = String(value.getSeconds()).padStart(2, "0");
+    return `${h}:${m}:${s}`;
+  }
+  const text = String(value);
+  if (text.includes("T")) return text.split("T")[1].slice(0, 8);
+  return text.slice(0, 8);
 };
 
 export type AttendanceExportResult = {
@@ -175,8 +189,8 @@ export const buildAttendanceExportRows = ({
       dayNames[dayIndex],
       record.employeeCode,
       employeeMap.get(record.employeeCode) || "(غير موجود بالماستر)",
-      record.checkIn ? toExcelTime(new Date(record.checkIn)) : "-",
-      record.checkOut ? toExcelTime(new Date(record.checkOut)) : "-",
+      record.checkIn ? parseTimeToSeconds(toTimeText(record.checkIn)) / 86400 : "-",
+      record.checkOut ? parseTimeToSeconds(toTimeText(record.checkOut)) / 86400 : "-",
       typeof record.totalHours === "number" ? Number(record.totalHours.toFixed(2)) : "-",
       record.overtimeHours && record.overtimeHours > 0 ? Number(record.overtimeHours.toFixed(2)) : "-",
       dayType,
