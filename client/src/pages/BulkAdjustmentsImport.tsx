@@ -300,32 +300,6 @@ export default function BulkAdjustmentsImport() {
     XLSX.writeFile(wb, "effects-template.xlsx");
   };
 
-  const exportTemplate = () => {
-    const wb = XLSX.utils.book_new();
-    const data = [
-      EFFECT_HEADERS,
-      ["648", "أحمد علي", "2025-01-05", "09:00:00", "11:00:00", "إذن صباحي", "موافق", "نموذج إذن"],
-      ["648", "أحمد علي", "2025-01-06", "", "", "إجازة نصف يوم", "موافق", "يتم الاستدلال تلقائياً"],
-      ["701", "منى سالم", "2025-01-10", "10:00:00", "14:00:00", "مأمورية", "موافق", "مأمورية خارجية"],
-      ["701", "منى سالم", "2025-01-12", "", "", "إجازة بالخصم", "موافق", ""],
-      ["702", "عمرو محمد", "2025-01-15", "", "", "إجازة رسمية", "نشط", "تعويض يوم عمل"],
-    ];
-    const ws = XLSX.utils.aoa_to_sheet(data);
-    XLSX.utils.book_append_sheet(wb, ws, "Effects");
-    XLSX.writeFile(wb, "effects-template.xlsx");
-  };
-
-  const statusBadge = (status: AdjustmentStatus) => {
-    const styles: Record<AdjustmentStatus, string> = {
-      Valid: "bg-emerald-50 text-emerald-700 border-emerald-200",
-      "Auto-filled": "bg-blue-50 text-blue-700 border-blue-200",
-      "Auto-inferred": "bg-purple-50 text-purple-700 border-purple-200",
-      "Needs Review": "bg-amber-50 text-amber-700 border-amber-200",
-      Invalid: "bg-rose-50 text-rose-700 border-rose-200",
-    };
-    return <Badge className={`border ${styles[status]}`}>{status}</Badge>;
-  };
-
   const updateReviewSide = (rowIndex: number, side: "صباح" | "مساء", applyToAll: boolean) => {
     setValidationRows((prev) => {
       return prev.map((row) => {
@@ -420,8 +394,8 @@ export default function BulkAdjustmentsImport() {
           <div className="bg-white rounded-2xl border border-border/50 shadow-sm p-4">
             <h3 className="font-semibold mb-3">نتيجة التحقق</h3>
             <div className="space-y-2 mb-3">
-              <p className="text-sm">صالحة: <Badge variant="secondary">{validRows.length}</Badge></p>
-              <p className="text-sm">غير صالحة: <Badge variant="destructive">{invalidRows.length}</Badge></p>
+              <div className="text-sm flex items-center gap-2">صالحة: <Badge variant="secondary">{validRows.length}</Badge></div>
+              <div className="text-sm flex items-center gap-2">غير صالحة: <Badge variant="destructive">{invalidRows.length}</Badge></div>
             </div>
             <div className="max-h-[360px] overflow-auto">
               {invalidRows.length === 0 ? (
