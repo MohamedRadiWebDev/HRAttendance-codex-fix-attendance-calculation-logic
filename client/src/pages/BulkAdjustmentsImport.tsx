@@ -113,6 +113,63 @@ export default function BulkAdjustmentsImport() {
     return checkInSec >= shiftStartSec + 2 * 3600 ? "صباحي" : "مسائي";
   };
 
+  const normalizeHalfDaySide = (type: string) => {
+    if (type.includes("صباح")) return "صباح";
+    if (type.includes("مساء")) return "مساء";
+    return null;
+  };
+
+  const buildRangeFromShift = ({
+    shiftStart,
+    shiftEnd,
+    durationMinutes,
+    side,
+  }: {
+    shiftStart: string;
+    shiftEnd: string;
+    durationMinutes: number;
+    side: "صباح" | "مساء";
+  }) => {
+    if (side === "صباح") {
+      const startSeconds = timeStringToSeconds(shiftStart);
+      return {
+        fromTime: secondsToHms(startSeconds),
+        toTime: secondsToHms(startSeconds + durationMinutes * 60),
+      };
+    }
+    const endSeconds = timeStringToSeconds(shiftEnd);
+    return {
+      fromTime: secondsToHms(endSeconds - durationMinutes * 60),
+      toTime: secondsToHms(endSeconds),
+    };
+  };
+
+  const buildLocalDateKey = (date: Date, offsetMinutes: number) => {
+    const localDate = new Date(date.getTime() - offsetMinutes * 60 * 1000);
+    const year = localDate.getUTCFullYear();
+    const month = String(localDate.getUTCMonth() + 1).padStart(2, "0");
+    const day = String(localDate.getUTCDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  };
+
+  const getPunchesForEmployeeDate = (employeeCode: string, dateStr: string) => {
+    const punchesForEmployee = punches.filter((punch) => punch.employeeCode === employeeCode);
+    const punchesForDate = punchesForEmployee.filter(
+      (punch) => buildLocalDateKey(punch.punchDatetime, DEFAULT_TIMEZONE_OFFSET_MINUTES) === dateStr
+    ).sort((a, b) => a.punchDatetime.getTime() - b.punchDatetime.getTime());
+    const checkIn = punchesForDate[0]?.punchDatetime ?? null;
+    const checkOut = punchesForDate.length > 1 ? punchesForDate[punchesForDate.length - 1].punchDatetime : null;
+    const checkInLocal = checkIn ? new Date(checkIn.getTime() - DEFAULT_TIMEZONE_OFFSET_MINUTES * 60 * 1000) : null;
+    const checkOutLocal = checkOut ? new Date(checkOut.getTime() - DEFAULT_TIMEZONE_OFFSET_MINUTES * 60 * 1000) : null;
+    const checkInSeconds = checkInLocal
+      ? checkInLocal.getUTCHours() * 3600 + checkInLocal.getUTCMinutes() * 60 + checkInLocal.getUTCSeconds()
+      : null;
+    const checkOutSeconds = checkOutLocal
+      ? checkOutLocal.getUTCHours() * 3600 + checkOutLocal.getUTCMinutes() * 60 + checkOutLocal.getUTCSeconds()
+      : null;
+    return { checkInSeconds, checkOutSeconds };
+  };
+
   const handleFile = async (file: File) => {
     setFileName(file.name);
     const workbook = XLSX.read(await file.arrayBuffer(), { type: "array" });
@@ -299,6 +356,55 @@ export default function BulkAdjustmentsImport() {
     XLSX.utils.book_append_sheet(wb, ws, "Effects");
     XLSX.writeFile(wb, "effects-template.xlsx");
   };
+
+  const statusBadge = (status: AdjustmentStatus) => {
+    const styles: Record<AdjustmentStatus, string> = {
+      Valid: "bg-emerald-50 text-emerald-700 border-emerald-200",
+      "Auto-filled": "bg-blue-50 text-blue-700 border-blue-200",
+      "Auto-inferred": "bg-purple-50 text-purple-700 border-purple-200",
+      "Needs Review": "bg-amber-50 text-amber-700 border-amber-200",
+      Invalid: "bg-rose-50 text-rose-700 border-rose-200",
+    };
+    return <Badge className={`border ${styles[status]}`}>{status}</Badge>;
+  };
+
+  const updateReviewSide = (rowIndex: number, side: "صباح" | "مساء", applyToAll: boolean) => {
+    setValidationRows((prev) => {
+      return prev.map((row) => {
+        if (!row.needsReview) return row;
+        const shouldUpdate = applyToAll ? row.needsReview : row.rowIndex === rowIndex;
+        if (!shouldUpdate || !row.shiftStart || !row.shiftEnd) return row;
+        const range = buildRangeFromShift({
+          shiftStart: row.shiftStart,
+          shiftEnd: row.shiftEnd,
+          durationMinutes: config.defaultHalfDayMinutes || 240,
+          side,
+        });
+        return {
+          ...row,
+          fromTime: range.fromTime,
+          toTime: range.toTime,
+          status: "Auto-filled",
+          inferredSide: side,
+          reason: undefined,
+          needsReview: false,
+        };
+      });
+    });
+  };
+
+  const summaryCounts = useMemo(() => {
+    return validationRows.reduce<Record<AdjustmentStatus, number>>((acc, row) => {
+      acc[row.status] = (acc[row.status] || 0) + 1;
+      return acc;
+    }, {
+      Valid: 0,
+      "Auto-filled": 0,
+      "Auto-inferred": 0,
+      "Needs Review": 0,
+      Invalid: 0,
+    });
+  }, [validationRows]);
 
   return (
     <div className="min-h-screen bg-slate-50" dir="rtl">
