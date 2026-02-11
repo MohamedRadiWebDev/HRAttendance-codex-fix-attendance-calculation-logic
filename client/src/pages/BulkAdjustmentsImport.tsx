@@ -100,7 +100,7 @@ export default function BulkAdjustmentsImport() {
   const employeeMap = useMemo(() => new Map((employees || []).map((e) => [e.code, e])), [employees]);
 
   const [fileName, setFileName] = useState("");
-  const [rows, setRows] = useState<ParsedEffectRow[]>([]);
+  const [validationRows, setValidationRows] = useState<ParsedEffectRow[]>([]);
 
   const inferGenericSide = (employeeCode: string, date: string, shiftStartSec: number) => {
     const dayPunches = punches
@@ -113,63 +113,6 @@ export default function BulkAdjustmentsImport() {
     return checkInSec >= shiftStartSec + 2 * 3600 ? "صباحي" : "مسائي";
   };
 
-  const normalizeHalfDaySide = (type: string) => {
-    if (type.includes("صباح")) return "صباح";
-    if (type.includes("مساء")) return "مساء";
-    return null;
-  };
-
-  const buildRangeFromShift = ({
-    shiftStart,
-    shiftEnd,
-    durationMinutes,
-    side,
-  }: {
-    shiftStart: string;
-    shiftEnd: string;
-    durationMinutes: number;
-    side: "صباح" | "مساء";
-  }) => {
-    if (side === "صباح") {
-      const startSeconds = timeStringToSeconds(shiftStart);
-      return {
-        fromTime: secondsToHms(startSeconds),
-        toTime: secondsToHms(startSeconds + durationMinutes * 60),
-      };
-    }
-    const endSeconds = timeStringToSeconds(shiftEnd);
-    return {
-      fromTime: secondsToHms(endSeconds - durationMinutes * 60),
-      toTime: secondsToHms(endSeconds),
-    };
-  };
-
-  const buildLocalDateKey = (date: Date, offsetMinutes: number) => {
-    const localDate = new Date(date.getTime() - offsetMinutes * 60 * 1000);
-    const year = localDate.getUTCFullYear();
-    const month = String(localDate.getUTCMonth() + 1).padStart(2, "0");
-    const day = String(localDate.getUTCDate()).padStart(2, "0");
-    return `${year}-${month}-${day}`;
-  };
-
-  const getPunchesForEmployeeDate = (employeeCode: string, dateStr: string) => {
-    const punchesForEmployee = punches.filter((punch) => punch.employeeCode === employeeCode);
-    const punchesForDate = punchesForEmployee.filter(
-      (punch) => buildLocalDateKey(punch.punchDatetime, DEFAULT_TIMEZONE_OFFSET_MINUTES) === dateStr
-    ).sort((a, b) => a.punchDatetime.getTime() - b.punchDatetime.getTime());
-    const checkIn = punchesForDate[0]?.punchDatetime ?? null;
-    const checkOut = punchesForDate.length > 1 ? punchesForDate[punchesForDate.length - 1].punchDatetime : null;
-    const checkInLocal = checkIn ? new Date(checkIn.getTime() - DEFAULT_TIMEZONE_OFFSET_MINUTES * 60 * 1000) : null;
-    const checkOutLocal = checkOut ? new Date(checkOut.getTime() - DEFAULT_TIMEZONE_OFFSET_MINUTES * 60 * 1000) : null;
-    const checkInSeconds = checkInLocal
-      ? checkInLocal.getUTCHours() * 3600 + checkInLocal.getUTCMinutes() * 60 + checkInLocal.getUTCSeconds()
-      : null;
-    const checkOutSeconds = checkOutLocal
-      ? checkOutLocal.getUTCHours() * 3600 + checkOutLocal.getUTCMinutes() * 60 + checkOutLocal.getUTCSeconds()
-      : null;
-    return { checkInSeconds, checkOutSeconds };
-  };
-
   const handleFile = async (file: File) => {
     setFileName(file.name);
     const workbook = XLSX.read(await file.arrayBuffer(), { type: "array" });
@@ -179,7 +122,7 @@ export default function BulkAdjustmentsImport() {
     const match = EFFECT_HEADERS.every((header, i) => headers[i] === header);
     if (!match) {
       toast({ title: "خطأ", description: "رأس الملف غير مطابق لقالب المؤثرات الموحد.", variant: "destructive" });
-      setRows([]);
+      setValidationRows([]);
       return;
     }
 
@@ -276,11 +219,11 @@ export default function BulkAdjustmentsImport() {
       return base;
     });
 
-    setRows(parsed);
+    setValidationRows(parsed);
   };
 
-  const validRows = useMemo(() => rows.filter((r) => r.state !== "Invalid"), [rows]);
-  const invalidRows = useMemo(() => rows.filter((r) => r.state === "Invalid"), [rows]);
+  const validRows = useMemo(() => validationRows.filter((r) => r.state !== "Invalid"), [validationRows]);
+  const invalidRows = useMemo(() => validationRows.filter((r) => r.state === "Invalid"), [validationRows]);
 
   const applyEffects = () => {
     if (!validRows.length) {
@@ -340,6 +283,21 @@ export default function BulkAdjustmentsImport() {
     setAdjustments(Array.from(adjustmentMap.values()));
     setLeaves(Array.from(leaveMap.values()));
     toast({ title: "تم التطبيق", description: `تم تطبيق ${validRows.length} مؤثر بنجاح.` });
+  };
+
+  const exportTemplate = () => {
+    const wb = XLSX.utils.book_new();
+    const data = [
+      EFFECT_HEADERS,
+      ["648", "أحمد علي", "2025-01-05", "09:00:00", "11:00:00", "إذن صباحي", "موافق", "نموذج إذن"],
+      ["648", "أحمد علي", "2025-01-06", "", "", "إجازة نصف يوم", "موافق", "يتم الاستدلال تلقائياً"],
+      ["701", "منى سالم", "2025-01-10", "10:00:00", "14:00:00", "مأمورية", "موافق", "مأمورية خارجية"],
+      ["701", "منى سالم", "2025-01-12", "", "", "إجازة بالخصم", "موافق", ""],
+      ["702", "عمرو محمد", "2025-01-15", "", "", "إجازة رسمية", "نشط", "تعويض يوم عمل"],
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(data);
+    XLSX.utils.book_append_sheet(wb, ws, "Effects");
+    XLSX.writeFile(wb, "effects-template.xlsx");
   };
 
   const exportTemplate = () => {
@@ -426,7 +384,7 @@ export default function BulkAdjustmentsImport() {
 
         <div className="grid lg:grid-cols-2 gap-4">
           <div className="bg-white rounded-2xl border border-border/50 shadow-sm p-4">
-            <h3 className="font-semibold mb-3">معاينة الصفوف ({rows.length})</h3>
+            <h3 className="font-semibold mb-3">معاينة الصفوف ({validationRows.length})</h3>
             <div className="max-h-[420px] overflow-auto">
               <table className="w-full text-xs text-right">
                 <thead className="sticky top-0 bg-white">
@@ -441,7 +399,7 @@ export default function BulkAdjustmentsImport() {
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map((row) => (
+                  {validationRows.map((row) => (
                     <tr key={`${row.rowIndex}-${row.employeeCode}-${row.date}`} className="border-t border-border/30">
                       <td className="py-1">{row.rowIndex}</td>
                       <td>{row.employeeCode}</td>
