@@ -205,7 +205,7 @@ export default function Attendance() {
 
   const handleExport = () => {
     if (!records || records.length === 0) return;
-    const { detailHeaders, detailRows, summaryRows } = buildAttendanceExportRows({
+    const { detailHeaders, detailRows, summaryHeaders, summaryRows } = buildAttendanceExportRows({
       records,
       employees: employees || [],
     });
