@@ -300,6 +300,70 @@ export default function BulkAdjustmentsImport() {
     XLSX.writeFile(wb, "effects-template.xlsx");
   };
 
+  const exportTemplate = () => {
+    const wb = XLSX.utils.book_new();
+    const data = [
+      EFFECT_HEADERS,
+      ["648", "أحمد علي", "2025-01-05", "09:00:00", "11:00:00", "إذن صباحي", "موافق", "نموذج إذن"],
+      ["648", "أحمد علي", "2025-01-06", "", "", "إجازة نصف يوم", "موافق", "يتم الاستدلال تلقائياً"],
+      ["701", "منى سالم", "2025-01-10", "10:00:00", "14:00:00", "مأمورية", "موافق", "مأمورية خارجية"],
+      ["701", "منى سالم", "2025-01-12", "", "", "إجازة بالخصم", "موافق", ""],
+      ["702", "عمرو محمد", "2025-01-15", "", "", "إجازة رسمية", "نشط", "تعويض يوم عمل"],
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(data);
+    XLSX.utils.book_append_sheet(wb, ws, "Effects");
+    XLSX.writeFile(wb, "effects-template.xlsx");
+  };
+
+  const statusBadge = (status: AdjustmentStatus) => {
+    const styles: Record<AdjustmentStatus, string> = {
+      Valid: "bg-emerald-50 text-emerald-700 border-emerald-200",
+      "Auto-filled": "bg-blue-50 text-blue-700 border-blue-200",
+      "Auto-inferred": "bg-purple-50 text-purple-700 border-purple-200",
+      "Needs Review": "bg-amber-50 text-amber-700 border-amber-200",
+      Invalid: "bg-rose-50 text-rose-700 border-rose-200",
+    };
+    return <Badge className={`border ${styles[status]}`}>{status}</Badge>;
+  };
+
+  const updateReviewSide = (rowIndex: number, side: "صباح" | "مساء", applyToAll: boolean) => {
+    setValidationRows((prev) => {
+      return prev.map((row) => {
+        if (!row.needsReview) return row;
+        const shouldUpdate = applyToAll ? row.needsReview : row.rowIndex === rowIndex;
+        if (!shouldUpdate || !row.shiftStart || !row.shiftEnd) return row;
+        const range = buildRangeFromShift({
+          shiftStart: row.shiftStart,
+          shiftEnd: row.shiftEnd,
+          durationMinutes: config.defaultHalfDayMinutes || 240,
+          side,
+        });
+        return {
+          ...row,
+          fromTime: range.fromTime,
+          toTime: range.toTime,
+          status: "Auto-filled",
+          inferredSide: side,
+          reason: undefined,
+          needsReview: false,
+        };
+      });
+    });
+  };
+
+  const summaryCounts = useMemo(() => {
+    return validationRows.reduce<Record<AdjustmentStatus, number>>((acc, row) => {
+      acc[row.status] = (acc[row.status] || 0) + 1;
+      return acc;
+    }, {
+      Valid: 0,
+      "Auto-filled": 0,
+      "Auto-inferred": 0,
+      "Needs Review": 0,
+      Invalid: 0,
+    });
+  }, [validationRows]);
+
   return (
     <div className="min-h-screen bg-slate-50" dir="rtl">
       <Sidebar />
