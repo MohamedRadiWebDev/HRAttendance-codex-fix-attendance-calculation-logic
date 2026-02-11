@@ -775,16 +775,24 @@ export default function BulkAdjustmentsImport() {
                     {leaveInvalidRows.length === 0 ? (
                       <p className="text-muted-foreground">لا توجد أخطاء حالياً.</p>
                     ) : (
-                      <ul className="space-y-2">
-                        {leaveInvalidRows.map((row, index) => (
-                          <li key={`${row.rowIndex}-${index}`} className="flex items-center justify-between border border-border/40 rounded-lg p-2">
-                            <span>الصف {row.rowIndex}</span>
-                            <span className="text-red-600">{row.reason}</span>
-                          </li>
-                        ))}
-                      </tbody>
-                    </table>
-                  )}
+                      <table className="w-full text-right text-xs">
+                        <thead className="sticky top-0 bg-slate-50">
+                          <tr>
+                            <th className="py-1">الصف</th>
+                            <th className="py-1">سبب عدم الصلاحية</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {leaveInvalidRows.map((row, index) => (
+                            <tr key={`${row.rowIndex}-${index}`} className="border-t border-border/30">
+                              <td className="py-1">{row.rowIndex}</td>
+                              <td className="py-1 text-red-600">{row.reason}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>
