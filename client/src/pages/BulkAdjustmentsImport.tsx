@@ -87,7 +87,6 @@ const toLocalDateKey = (date: Date) => {
   return `${y}-${m}-${d}`;
 };
 
-
 export default function BulkAdjustmentsImport() {
   const { data: employees } = useEmployees();
   const rules = useAttendanceStore((s) => s.rules);
@@ -96,11 +95,11 @@ export default function BulkAdjustmentsImport() {
   const leaves = useAttendanceStore((s) => s.leaves);
   const setAdjustments = useAttendanceStore((s) => s.setAdjustments);
   const setLeaves = useAttendanceStore((s) => s.setLeaves);
+  const processAttendance = useAttendanceStore((s) => s.processAttendance);
   const config = useAttendanceStore((s) => s.config);
 
   const effects = useEffectsStore((s) => s.effects);
   const setEffects = useEffectsStore((s) => s.setEffects);
-  const addEffects = useEffectsStore((s) => s.addEffects);
   const clearEffects = useEffectsStore((s) => s.clearEffects);
 
   const { toast } = useToast();
@@ -119,6 +118,86 @@ export default function BulkAdjustmentsImport() {
     const local = new Date(checkIn.punchDatetime.getTime() - LOCAL_OFFSET_MINUTES * 60 * 1000);
     const checkInSec = local.getUTCHours() * 3600 + local.getUTCMinutes() * 60 + local.getUTCSeconds();
     return checkInSec >= shiftStartSec + 2 * 3600 ? "صباحي" : "مسائي";
+  };
+
+  const validRows = useMemo(() => validationRows.filter((r) => r.state !== "Invalid"), [validationRows]);
+  const invalidRows = useMemo(() => validationRows.filter((r) => r.state === "Invalid"), [validationRows]);
+
+  const mapRowsToEffects = (rows: ParsedEffectRow[]) => rows.map<Effect>((row) => ({
+    id: `${Date.now()}_${row.rowIndex}_${Math.random().toString(36).slice(2, 8)}`,
+    employeeCode: row.employeeCode,
+    employeeName: row.employeeName,
+    date: row.date,
+    from: row.fromTime || "00:00:00",
+    to: row.toTime || "00:00:00",
+    type: row.normalizedType,
+    status: row.status,
+    note: row.note,
+    createdAt: new Date().toISOString(),
+  }));
+
+  const applyEffectsToAttendance = (rows: Effect[], sourceFileName?: string) => {
+    if (!rows.length) {
+      toast({ title: "تنبيه", description: "لا توجد مؤثرات محفوظة للتطبيق.", variant: "destructive" });
+      return;
+    }
+
+    const adjustmentMap = new Map<string, any>();
+    adjustments.forEach((adj) => adjustmentMap.set(`${adj.employeeCode}__${adj.date}__${adj.type}__${adj.fromTime}__${adj.toTime}`, adj));
+    const leaveMap = new Map<string, any>();
+    leaves.forEach((leave) => leaveMap.set(`${leave.type}__${leave.scope}__${leave.scopeValue || ""}__${leave.startDate}__${leave.endDate}`, leave));
+
+    let nextAdjustmentId = Math.max(0, ...adjustments.map((a) => a.id || 0)) + 1;
+    let nextLeaveId = Math.max(0, ...leaves.map((l) => l.id || 0)) + 1;
+
+    rows.forEach((row) => {
+      if (row.type === "إجازة رسمية" || row.type === "إجازة تحصيل") {
+        const leaveRow: InsertLeave = {
+          type: row.type === "إجازة رسمية" ? "official" : "collections",
+          scope: "emp",
+          scopeValue: row.employeeCode,
+          startDate: row.date,
+          endDate: row.date,
+          note: row.note || "",
+          createdAt: new Date(),
+        };
+        const key = `${leaveRow.type}__${leaveRow.scope}__${leaveRow.scopeValue}__${leaveRow.startDate}__${leaveRow.endDate}`;
+        if (!leaveMap.has(key)) leaveMap.set(key, { id: nextLeaveId++, ...leaveRow });
+        return;
+      }
+
+      const normalizedType = row.type === "إذن صباحي" ? "اذن صباحي" : row.type === "إذن مسائي" ? "اذن مسائي" : row.type;
+      const adjustment: InsertAdjustment = {
+        employeeCode: row.employeeCode,
+        date: row.date,
+        fromTime: row.from || "00:00:00",
+        toTime: row.to || "00:00:00",
+        type: normalizedType as any,
+        source: "effects_import",
+        sourceFileName: sourceFileName || fileName || "effects.xlsx",
+        importedAt: new Date(),
+        note: [row.note, row.status ? `الحالة: ${row.status}` : ""].filter(Boolean).join(" | "),
+      };
+      const key = `${adjustment.employeeCode}__${adjustment.date}__${adjustment.type}__${adjustment.fromTime}__${adjustment.toTime}`;
+      if (!adjustmentMap.has(key)) adjustmentMap.set(key, { id: nextAdjustmentId++, ...adjustment });
+    });
+
+    setAdjustments(Array.from(adjustmentMap.values()));
+    setLeaves(Array.from(leaveMap.values()));
+
+    const affectedDates = Array.from(new Set(rows.map((row) => row.date))).sort();
+    if (affectedDates.length > 0) {
+      processAttendance({
+        startDate: affectedDates[0],
+        endDate: affectedDates[affectedDates.length - 1],
+        timezoneOffsetMinutes: new Date().getTimezoneOffset(),
+      });
+    }
+
+    toast({
+      title: "تم الاستيراد والتطبيق",
+      description: `تم تطبيق ${rows.length} مؤثر صالح تلقائياً${invalidRows.length ? ` مع ${invalidRows.length} صف غير صالح.` : ""}`,
+    });
   };
 
   const parseFile = async (file: File) => {
@@ -228,86 +307,19 @@ export default function BulkAdjustmentsImport() {
     });
 
     setValidationRows(parsed);
-  };
 
-  const validRows = useMemo(() => validationRows.filter((r) => r.state !== "Invalid"), [validationRows]);
-  const invalidRows = useMemo(() => validationRows.filter((r) => r.state === "Invalid"), [validationRows]);
-
-  const mapValidRowsToEffects = () => validRows.map<Effect>((row) => ({
-    id: `${Date.now()}_${row.rowIndex}_${Math.random().toString(36).slice(2, 8)}`,
-    employeeCode: row.employeeCode,
-    employeeName: row.employeeName,
-    date: row.date,
-    from: row.fromTime || "00:00:00",
-    to: row.toTime || "00:00:00",
-    type: row.normalizedType,
-    status: row.status,
-    note: row.note,
-    createdAt: new Date().toISOString(),
-  }));
-
-  const saveEffectsReplace = () => {
-    if (!validRows.length) return toast({ title: "تنبيه", description: "لا توجد صفوف صالحة للحفظ.", variant: "destructive" });
-    setEffects(mapValidRowsToEffects());
-    toast({ title: "نجاح", description: "تم حفظ المؤثرات بنجاح ✅" });
-  };
-
-  const saveEffectsAppend = () => {
-    if (!validRows.length) return toast({ title: "تنبيه", description: "لا توجد صفوف صالحة للحفظ.", variant: "destructive" });
-    addEffects(mapValidRowsToEffects());
-    toast({ title: "نجاح", description: "تم حفظ المؤثرات بنجاح ✅" });
-  };
-
-  const applySavedEffects = () => {
-    if (!effects.length) {
-      toast({ title: "تنبيه", description: "لا توجد مؤثرات محفوظة للتطبيق.", variant: "destructive" });
+    const validParsed = parsed.filter((row) => row.state !== "Invalid");
+    if (!validParsed.length) {
+      toast({ title: "تنبيه", description: "لا توجد صفوف صالحة للاستيراد.", variant: "destructive" });
       return;
     }
 
-    const adjustmentMap = new Map<string, any>();
-    adjustments.forEach((adj) => adjustmentMap.set(`${adj.employeeCode}__${adj.date}__${adj.type}__${adj.fromTime}__${adj.toTime}`, adj));
-    const leaveMap = new Map<string, any>();
-    leaves.forEach((leave) => leaveMap.set(`${leave.type}__${leave.scope}__${leave.scopeValue || ""}__${leave.startDate}__${leave.endDate}`, leave));
-
-    let nextAdjustmentId = Math.max(0, ...adjustments.map((a) => a.id || 0)) + 1;
-    let nextLeaveId = Math.max(0, ...leaves.map((l) => l.id || 0)) + 1;
-
-    effects.forEach((row) => {
-      if (row.type === "إجازة رسمية" || row.type === "إجازة تحصيل") {
-        const leaveRow: InsertLeave = {
-          type: row.type === "إجازة رسمية" ? "official" : "collections",
-          scope: "emp",
-          scopeValue: row.employeeCode,
-          startDate: row.date,
-          endDate: row.date,
-          note: row.note || "",
-          createdAt: new Date(),
-        };
-        const key = `${leaveRow.type}__${leaveRow.scope}__${leaveRow.scopeValue}__${leaveRow.startDate}__${leaveRow.endDate}`;
-        if (!leaveMap.has(key)) leaveMap.set(key, { id: nextLeaveId++, ...leaveRow });
-        return;
-      }
-
-      const normalizedType = row.type === "إذن صباحي" ? "اذن صباحي" : row.type === "إذن مسائي" ? "اذن مسائي" : row.type;
-      const adjustment: InsertAdjustment = {
-        employeeCode: row.employeeCode,
-        date: row.date,
-        fromTime: row.from || "00:00:00",
-        toTime: row.to || "00:00:00",
-        type: normalizedType as any,
-        source: "effects_import",
-        sourceFileName: fileName || "effects.xlsx",
-        importedAt: new Date(),
-        note: [row.note, row.status ? `الحالة: ${row.status}` : ""].filter(Boolean).join(" | "),
-      };
-      const key = `${adjustment.employeeCode}__${adjustment.date}__${adjustment.type}__${adjustment.fromTime}__${adjustment.toTime}`;
-      if (!adjustmentMap.has(key)) adjustmentMap.set(key, { id: nextAdjustmentId++, ...adjustment });
-    });
-
-    setAdjustments(Array.from(adjustmentMap.values()));
-    setLeaves(Array.from(leaveMap.values()));
-    toast({ title: "تم التطبيق", description: `تم تطبيق ${effects.length} مؤثر محفوظ.` });
+    const importedEffects = mapRowsToEffects(validParsed);
+    setEffects(importedEffects);
+    applyEffectsToAttendance(importedEffects, file.name);
   };
+
+  const applySavedEffects = () => applyEffectsToAttendance(effects, fileName);
 
   const exportTemplate = () => {
     const wb = XLSX.utils.book_new();
@@ -344,7 +356,7 @@ export default function BulkAdjustmentsImport() {
 
             <div className="rounded-2xl border bg-white overflow-hidden">
               <div className="p-4 border-b bg-slate-50/50">
-                <h3 className="font-semibold">معاينة الملف قبل الحفظ</h3>
+                <h3 className="font-semibold">نتائج التحقق من الاستيراد</h3>
               </div>
               <div className="max-h-[60vh] overflow-auto">
                 <table className="w-full text-xs text-right min-w-[860px]">
@@ -390,9 +402,7 @@ export default function BulkAdjustmentsImport() {
                 <div>غير صالحة: <Badge variant="destructive">{invalidRows.length}</Badge></div>
               </div>
               <div className="flex flex-wrap gap-3">
-                <Button onClick={saveEffectsReplace}>حفظ (استبدال)</Button>
-                <Button variant="secondary" onClick={saveEffectsAppend}>حفظ (إضافة)</Button>
-                <Button variant="outline" onClick={applySavedEffects}>تطبيق المؤثرات المحفوظة</Button>
+                <Button variant="outline" onClick={applySavedEffects}>إعادة تطبيق المؤثرات المحفوظة</Button>
                 <Button variant="ghost" onClick={clearEffects}>مسح المؤثرات المحفوظة</Button>
               </div>
             </div>
