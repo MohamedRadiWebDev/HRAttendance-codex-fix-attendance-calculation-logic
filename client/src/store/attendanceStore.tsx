@@ -35,6 +35,9 @@ type AttendanceState = {
     autoBackupEnabled: boolean;
     attendanceStartDate?: string | null;
     attendanceEndDate?: string | null;
+    defaultPermissionMinutes: number;
+    defaultHalfDayMinutes: number;
+    defaultHalfDaySide: "صباح" | "مساء";
   };
   nextIds: {
     employee: number;
@@ -94,6 +97,9 @@ const initialState: AttendanceState = {
     autoBackupEnabled: false,
     attendanceStartDate: null,
     attendanceEndDate: null,
+    defaultPermissionMinutes: 120,
+    defaultHalfDayMinutes: 240,
+    defaultHalfDaySide: "صباح",
   },
   nextIds: { employee: 1, rule: 1, adjustment: 1, leave: 1, record: 1 },
 };
@@ -470,6 +476,9 @@ export const AttendanceStoreProvider = ({ children }: { children: React.ReactNod
           autoBackupEnabled: false,
           attendanceStartDate: null,
           attendanceEndDate: null,
+          defaultPermissionMinutes: 120,
+          defaultHalfDayMinutes: 240,
+          defaultHalfDaySide: "صباح",
         },
         nextIds: { employee: 1, rule: 1, adjustment: 1, leave: 1, record: 1 },
       });
