@@ -78,4 +78,46 @@ describe("integration fixtures", () => {
     expect(term?.leaveDeductionDays).toBe(1);
     expect((term?.penalties as any[] | undefined)?.some((p) => p.type === "غياب")).toBe(false);
   });
+
+  it("effect adjustment changes day output", () => {
+    const e = toEmployee({ code: "701", shiftStart: "09:00" });
+    const punches = toPunches(e.code, ["2024-06-12T10:00:00", "2024-06-12T17:00:00"]);
+
+    const withoutAdjustment = processAttendanceRecords({
+      employees: [e],
+      punches,
+      startDate: "2024-06-12",
+      endDate: "2024-06-12",
+      timezoneOffsetMinutes: 0,
+    } as any);
+
+    const withAdjustment = processAttendanceRecords({
+      employees: [e],
+      punches,
+      adjustments: [
+        {
+          id: 1,
+          employeeCode: "701",
+          date: "2024-06-12",
+          fromTime: "09:00:00",
+          toTime: "10:00:00",
+          type: "اذن صباحي",
+          source: "test",
+          sourceFileName: "fixture",
+          importedAt: new Date(),
+          note: null,
+        },
+      ],
+      startDate: "2024-06-12",
+      endDate: "2024-06-12",
+      timezoneOffsetMinutes: 0,
+    } as any);
+
+    const withoutLate = (withoutAdjustment[0].penalties as any[]).filter((p) => p.type === "تأخير").reduce((sum, p) => sum + Number(p.value || 0), 0);
+    const withLate = (withAdjustment[0].penalties as any[]).filter((p) => p.type === "تأخير").reduce((sum, p) => sum + Number(p.value || 0), 0);
+
+    expect(withoutLate).toBeGreaterThan(0);
+    expect(withLate).toBe(0);
+  });
+
 });
