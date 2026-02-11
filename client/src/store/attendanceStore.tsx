@@ -14,6 +14,7 @@ import type {
   SpecialRule,
 } from "@shared/schema";
 import { processAttendanceRecords } from "@/engine/attendanceEngine";
+import { useEffectsStore } from "@/store/effectsStore";
 import {
   clearPersistedState,
   deserializeAttendanceRecords,
@@ -35,6 +36,9 @@ type AttendanceState = {
     autoBackupEnabled: boolean;
     attendanceStartDate?: string | null;
     attendanceEndDate?: string | null;
+    defaultPermissionMinutes: number;
+    defaultHalfDayMinutes: number;
+    defaultHalfDaySide: "صباح" | "مساء";
   };
   nextIds: {
     employee: number;
@@ -94,6 +98,9 @@ const initialState: AttendanceState = {
     autoBackupEnabled: false,
     attendanceStartDate: null,
     attendanceEndDate: null,
+    defaultPermissionMinutes: 120,
+    defaultHalfDayMinutes: 240,
+    defaultHalfDaySide: "صباح",
   },
   nextIds: { employee: 1, rule: 1, adjustment: 1, leave: 1, record: 1 },
 };
@@ -419,6 +426,7 @@ export const AttendanceStoreProvider = ({ children }: { children: React.ReactNod
         if (record.workedOnOfficialHoliday === null || record.workedOnOfficialHoliday === undefined) return;
         overrideMap.set(`${record.employeeCode}__${record.date}`, record.workedOnOfficialHoliday);
       });
+      const effects = useEffectsStore.getState().effects;
       const records = processAttendanceRecords({
         employees: current.employees,
         punches: current.punches,
@@ -426,6 +434,7 @@ export const AttendanceStoreProvider = ({ children }: { children: React.ReactNod
         leaves: current.leaves,
         officialHolidays: current.officialHolidays,
         adjustments: current.adjustments,
+        effects,
         startDate,
         endDate,
         timezoneOffsetMinutes,
@@ -470,6 +479,9 @@ export const AttendanceStoreProvider = ({ children }: { children: React.ReactNod
           autoBackupEnabled: false,
           attendanceStartDate: null,
           attendanceEndDate: null,
+          defaultPermissionMinutes: 120,
+          defaultHalfDayMinutes: 240,
+          defaultHalfDaySide: "صباح",
         },
         nextIds: { employee: 1, rule: 1, adjustment: 1, leave: 1, record: 1 },
       });
