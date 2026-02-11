@@ -16,6 +16,7 @@ import NotFound from "@/pages/not-found";
 import Dashboard from "@/pages/Dashboard";
 import Employees from "@/pages/Employees";
 import Attendance from "@/pages/Attendance";
+import AttendanceHeatmap from "@/pages/AttendanceHeatmap";
 import Import from "@/pages/Import";
 import Rules from "@/pages/Rules";
 import Adjustments from "@/pages/Adjustments";
@@ -31,10 +32,12 @@ function Router() {
       <Route path="/" component={Dashboard} />
       <Route path="/employees" component={Employees} />
       <Route path="/attendance" component={Attendance} />
+      <Route path="/attendance-heatmap" component={AttendanceHeatmap} />
       <Route path="/import" component={Import} />
       <Route path="/rules" component={Rules} />
       <Route path="/adjustments" component={Adjustments} />
       <Route path="/bulk-adjustments" component={BulkAdjustmentsImport} />
+      <Route path="/effects-import" component={BulkAdjustmentsImport} />
       <Route path="/leaves" component={Leaves} />
       <Route path="/backup" component={BackupRestore} />
       <Route component={NotFound} />
