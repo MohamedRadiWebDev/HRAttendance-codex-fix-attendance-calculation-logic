@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { useEmployees } from "@/hooks/use-employees";
 import { useAttendanceStore } from "@/store/attendanceStore";
+import { useEffectsStore, type Effect } from "@/store/effectsStore";
 import { resolveShiftForDate, secondsToHms, timeStringToSeconds } from "@/engine/attendanceEngine";
 import type { InsertAdjustment, InsertLeave } from "@shared/schema";
 
@@ -86,6 +87,7 @@ const toLocalDateKey = (date: Date) => {
   return `${y}-${m}-${d}`;
 };
 
+
 export default function BulkAdjustmentsImport() {
   const { data: employees } = useEmployees();
   const rules = useAttendanceStore((s) => s.rules);
@@ -95,6 +97,12 @@ export default function BulkAdjustmentsImport() {
   const setAdjustments = useAttendanceStore((s) => s.setAdjustments);
   const setLeaves = useAttendanceStore((s) => s.setLeaves);
   const config = useAttendanceStore((s) => s.config);
+
+  const effects = useEffectsStore((s) => s.effects);
+  const setEffects = useEffectsStore((s) => s.setEffects);
+  const addEffects = useEffectsStore((s) => s.addEffects);
+  const clearEffects = useEffectsStore((s) => s.clearEffects);
+
   const { toast } = useToast();
 
   const employeeMap = useMemo(() => new Map((employees || []).map((e) => [e.code, e])), [employees]);
@@ -113,7 +121,7 @@ export default function BulkAdjustmentsImport() {
     return checkInSec >= shiftStartSec + 2 * 3600 ? "صباحي" : "مسائي";
   };
 
-  const handleFile = async (file: File) => {
+  const parseFile = async (file: File) => {
     setFileName(file.name);
     const workbook = XLSX.read(await file.arrayBuffer(), { type: "array" });
     const ws = workbook.Sheets[workbook.SheetNames[0]];
@@ -164,8 +172,8 @@ export default function BulkAdjustmentsImport() {
       const shiftStartSec = timeStringToSeconds(shift.shiftStart);
       const shiftEndSec = timeStringToSeconds(shift.shiftEnd);
 
-      if (typeText === "مأمورية") {
-        if (!fromTime || !toTime) return { ...base, state: "Invalid", reason: "المأمورية يجب أن تحتوي على من / إلى" };
+      if (typeText === "مأمورية" && (!fromTime || !toTime)) {
+        return { ...base, state: "Invalid", reason: "المأمورية يجب أن تحتوي على من / إلى" };
       }
 
       if (typeText === "إذن صباحي" && (!fromTime || !toTime)) {
@@ -225,22 +233,46 @@ export default function BulkAdjustmentsImport() {
   const validRows = useMemo(() => validationRows.filter((r) => r.state !== "Invalid"), [validationRows]);
   const invalidRows = useMemo(() => validationRows.filter((r) => r.state === "Invalid"), [validationRows]);
 
-  const applyEffects = () => {
-    if (!validRows.length) {
-      toast({ title: "تنبيه", description: "لا توجد صفوف صالحة للتطبيق.", variant: "destructive" });
+  const mapValidRowsToEffects = () => validRows.map<Effect>((row) => ({
+    id: `${Date.now()}_${row.rowIndex}_${Math.random().toString(36).slice(2, 8)}`,
+    employeeCode: row.employeeCode,
+    employeeName: row.employeeName,
+    date: row.date,
+    from: row.fromTime || "00:00:00",
+    to: row.toTime || "00:00:00",
+    type: row.normalizedType,
+    status: row.status,
+    note: row.note,
+    createdAt: new Date().toISOString(),
+  }));
+
+  const saveEffectsReplace = () => {
+    if (!validRows.length) return toast({ title: "تنبيه", description: "لا توجد صفوف صالحة للحفظ.", variant: "destructive" });
+    setEffects(mapValidRowsToEffects());
+    toast({ title: "نجاح", description: "تم حفظ المؤثرات بنجاح ✅" });
+  };
+
+  const saveEffectsAppend = () => {
+    if (!validRows.length) return toast({ title: "تنبيه", description: "لا توجد صفوف صالحة للحفظ.", variant: "destructive" });
+    addEffects(mapValidRowsToEffects());
+    toast({ title: "نجاح", description: "تم حفظ المؤثرات بنجاح ✅" });
+  };
+
+  const applySavedEffects = () => {
+    if (!effects.length) {
+      toast({ title: "تنبيه", description: "لا توجد مؤثرات محفوظة للتطبيق.", variant: "destructive" });
       return;
     }
 
     const adjustmentMap = new Map<string, any>();
     adjustments.forEach((adj) => adjustmentMap.set(`${adj.employeeCode}__${adj.date}__${adj.type}__${adj.fromTime}__${adj.toTime}`, adj));
-
     const leaveMap = new Map<string, any>();
     leaves.forEach((leave) => leaveMap.set(`${leave.type}__${leave.scope}__${leave.scopeValue || ""}__${leave.startDate}__${leave.endDate}`, leave));
 
     let nextAdjustmentId = Math.max(0, ...adjustments.map((a) => a.id || 0)) + 1;
     let nextLeaveId = Math.max(0, ...leaves.map((l) => l.id || 0)) + 1;
 
-    validRows.forEach((row) => {
+    effects.forEach((row) => {
       if (row.type === "إجازة رسمية" || row.type === "إجازة تحصيل") {
         const leaveRow: InsertLeave = {
           type: row.type === "إجازة رسمية" ? "official" : "collections",
@@ -252,22 +284,16 @@ export default function BulkAdjustmentsImport() {
           createdAt: new Date(),
         };
         const key = `${leaveRow.type}__${leaveRow.scope}__${leaveRow.scopeValue}__${leaveRow.startDate}__${leaveRow.endDate}`;
-        if (!leaveMap.has(key)) {
-          leaveMap.set(key, { id: nextLeaveId++, ...leaveRow });
-        }
+        if (!leaveMap.has(key)) leaveMap.set(key, { id: nextLeaveId++, ...leaveRow });
         return;
       }
 
-      const normalizedType =
-        row.normalizedType === "إذن صباحي" ? "اذن صباحي" :
-        row.normalizedType === "إذن مسائي" ? "اذن مسائي" :
-        row.normalizedType;
-
+      const normalizedType = row.type === "إذن صباحي" ? "اذن صباحي" : row.type === "إذن مسائي" ? "اذن مسائي" : row.type;
       const adjustment: InsertAdjustment = {
         employeeCode: row.employeeCode,
         date: row.date,
-        fromTime: row.fromTime || "00:00:00",
-        toTime: row.toTime || "00:00:00",
+        fromTime: row.from || "00:00:00",
+        toTime: row.to || "00:00:00",
         type: normalizedType as any,
         source: "effects_import",
         sourceFileName: fileName || "effects.xlsx",
@@ -275,14 +301,12 @@ export default function BulkAdjustmentsImport() {
         note: [row.note, row.status ? `الحالة: ${row.status}` : ""].filter(Boolean).join(" | "),
       };
       const key = `${adjustment.employeeCode}__${adjustment.date}__${adjustment.type}__${adjustment.fromTime}__${adjustment.toTime}`;
-      if (!adjustmentMap.has(key)) {
-        adjustmentMap.set(key, { id: nextAdjustmentId++, ...adjustment });
-      }
+      if (!adjustmentMap.has(key)) adjustmentMap.set(key, { id: nextAdjustmentId++, ...adjustment });
     });
 
     setAdjustments(Array.from(adjustmentMap.values()));
     setLeaves(Array.from(leaveMap.values()));
-    toast({ title: "تم التطبيق", description: `تم تطبيق ${validRows.length} مؤثر بنجاح.` });
+    toast({ title: "تم التطبيق", description: `تم تطبيق ${effects.length} مؤثر محفوظ.` });
   };
 
   const exportTemplate = () => {
@@ -298,31 +322,6 @@ export default function BulkAdjustmentsImport() {
     const ws = XLSX.utils.aoa_to_sheet(data);
     XLSX.utils.book_append_sheet(wb, ws, "Effects");
     XLSX.writeFile(wb, "effects-template.xlsx");
-  };
-
-  const updateReviewSide = (rowIndex: number, side: "صباح" | "مساء", applyToAll: boolean) => {
-    setValidationRows((prev) => {
-      return prev.map((row) => {
-        if (!row.needsReview) return row;
-        const shouldUpdate = applyToAll ? row.needsReview : row.rowIndex === rowIndex;
-        if (!shouldUpdate || !row.shiftStart || !row.shiftEnd) return row;
-        const range = buildRangeFromShift({
-          shiftStart: row.shiftStart,
-          shiftEnd: row.shiftEnd,
-          durationMinutes: config.defaultHalfDayMinutes || 240,
-          side,
-        });
-        return {
-          ...row,
-          fromTime: range.fromTime,
-          toTime: range.toTime,
-          status: "Auto-filled",
-          inferredSide: side,
-          reason: undefined,
-          needsReview: false,
-        };
-      });
-    });
   };
 
   const summaryCounts = useMemo(() => {
@@ -341,85 +340,74 @@ export default function BulkAdjustmentsImport() {
   return (
     <div className="min-h-screen bg-slate-50" dir="rtl">
       <Sidebar />
-      <main className="mr-64 p-6 space-y-6">
-        <Header title="استيراد المؤثرات" subtitle="ملف Excel موحد للتعديلات والإجازات والغياب" />
+      <div className="mr-72 min-h-screen flex flex-col">
+        <main className="flex-1 overflow-y-auto p-6 md:p-8">
+          <div className="max-w-6xl mx-auto space-y-6">
+            <Header title="استيراد المؤثرات" subtitle="ملف Excel موحد للتعديلات والإجازات والغياب" />
 
-        <div className="bg-white rounded-2xl border border-border/50 shadow-sm p-6 space-y-4">
-          <div className="flex flex-wrap items-center gap-3">
-            <Input type="file" accept=".xlsx,.xls" className="max-w-sm" onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])} />
-            <Button variant="outline" onClick={exportTemplate}>تصدير قالب المؤثرات</Button>
-            <Button onClick={applyEffects}>تطبيق المؤثرات</Button>
-            {fileName && <Badge variant="secondary">{fileName}</Badge>}
-          </div>
-          <p className="text-sm text-muted-foreground">
-            الأعمدة المطلوبة: {EFFECT_HEADERS.join(" | ")}
-          </p>
-        </div>
-
-        <div className="grid lg:grid-cols-2 gap-4">
-          <div className="bg-white rounded-2xl border border-border/50 shadow-sm p-4">
-            <h3 className="font-semibold mb-3">معاينة الصفوف ({validationRows.length})</h3>
-            <div className="max-h-[420px] overflow-auto">
-              <table className="w-full text-xs text-right">
-                <thead className="sticky top-0 bg-white">
-                  <tr>
-                    <th className="py-2">الصف</th>
-                    <th>الكود</th>
-                    <th>التاريخ</th>
-                    <th>النوع</th>
-                    <th>من</th>
-                    <th>إلى</th>
-                    <th>الحالة</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {validationRows.map((row) => (
-                    <tr key={`${row.rowIndex}-${row.employeeCode}-${row.date}`} className="border-t border-border/30">
-                      <td className="py-1">{row.rowIndex}</td>
-                      <td>{row.employeeCode}</td>
-                      <td>{row.date || "-"}</td>
-                      <td>{row.type}</td>
-                      <td>{row.fromTime || "-"}</td>
-                      <td>{row.toTime || "-"}</td>
-                      <td>
-                        <Badge variant={row.state === "Invalid" ? "destructive" : "secondary"}>{row.state}</Badge>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div className="rounded-2xl border bg-white p-5 space-y-4">
+              <div className="flex flex-wrap items-center gap-3">
+                <Input type="file" accept=".xlsx,.xls" className="max-w-sm" onChange={(e) => e.target.files?.[0] && parseFile(e.target.files[0])} />
+                <Button variant="outline" onClick={exportTemplate}>تصدير قالب المؤثرات</Button>
+                {fileName && <Badge variant="secondary">{fileName}</Badge>}
+                <Badge className="mr-auto">إجمالي المؤثرات المحفوظة: {effects.length}</Badge>
+              </div>
+              <p className="text-sm text-muted-foreground">الأعمدة المطلوبة: {EFFECT_HEADERS.join(" | ")}</p>
             </div>
           </div>
 
-          <div className="bg-white rounded-2xl border border-border/50 shadow-sm p-4">
-            <h3 className="font-semibold mb-3">نتيجة التحقق</h3>
-            <div className="space-y-2 mb-3">
-              <div className="text-sm flex items-center gap-2">صالحة: <Badge variant="secondary">{validRows.length}</Badge></div>
-              <div className="text-sm flex items-center gap-2">غير صالحة: <Badge variant="destructive">{invalidRows.length}</Badge></div>
-            </div>
-            <div className="max-h-[360px] overflow-auto">
-              {invalidRows.length === 0 ? (
-                <p className="text-sm text-muted-foreground">لا توجد أخطاء.</p>
-              ) : (
-                <table className="w-full text-xs text-right">
+            <div className="rounded-2xl border bg-white overflow-hidden">
+              <div className="p-4 border-b bg-slate-50/50">
+                <h3 className="font-semibold">معاينة الملف قبل الحفظ</h3>
+              </div>
+              <div className="max-h-[60vh] overflow-auto">
+                <table className="w-full text-xs text-right min-w-[860px]">
                   <thead className="sticky top-0 bg-white">
                     <tr>
-                      <th className="py-2">الصف</th>
-                      <th>الكود</th>
-                      <th>السبب</th>
+                      <th className="py-2 px-3">الصف</th>
+                      <th className="py-2 px-3">الكود</th>
+                      <th className="py-2 px-3">التاريخ</th>
+                      <th className="py-2 px-3">النوع</th>
+                      <th className="py-2 px-3">من</th>
+                      <th className="py-2 px-3">إلى</th>
+                      <th className="py-2 px-3">الحالة</th>
+                      <th className="py-2 px-3">سبب الرفض</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {invalidRows.map((row) => (
-                      <tr key={`inv-${row.rowIndex}`} className="border-t border-border/30">
-                        <td className="py-1">{row.rowIndex}</td>
-                        <td>{row.employeeCode || "-"}</td>
-                        <td className="text-red-600">{row.reason}</td>
+                    {validationRows.map((row) => (
+                      <tr key={`${row.rowIndex}-${row.employeeCode}-${row.date}`} className="border-t border-border/30">
+                        <td className="py-1 px-3">{row.rowIndex}</td>
+                        <td className="py-1 px-3">{row.employeeCode}</td>
+                        <td className="py-1 px-3">{row.date || "-"}</td>
+                        <td className="py-1 px-3">{row.type}</td>
+                        <td className="py-1 px-3">{row.fromTime || "-"}</td>
+                        <td className="py-1 px-3">{row.toTime || "-"}</td>
+                        <td className="py-1 px-3"><Badge variant={row.state === "Invalid" ? "destructive" : "secondary"}>{row.state}</Badge></td>
+                        <td className="py-1 px-3 text-red-600">{row.reason || "-"}</td>
+                      </tr>
+                    ))}
+                    {validationRows.length === 0 && (
+                      <tr>
+                        <td colSpan={8} className="py-6 text-center text-muted-foreground">قم برفع ملف المؤثرات للمعاينة.</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               )}
+            </div>
+
+            <div className="rounded-2xl border bg-white p-5 space-y-4">
+              <div className="flex flex-wrap items-center gap-3 text-sm">
+                <div>صالحة: <Badge variant="secondary">{validRows.length}</Badge></div>
+                <div>غير صالحة: <Badge variant="destructive">{invalidRows.length}</Badge></div>
+              </div>
+              <div className="flex flex-wrap gap-3">
+                <Button onClick={saveEffectsReplace}>حفظ (استبدال)</Button>
+                <Button variant="secondary" onClick={saveEffectsAppend}>حفظ (إضافة)</Button>
+                <Button variant="outline" onClick={applySavedEffects}>تطبيق المؤثرات المحفوظة</Button>
+                <Button variant="ghost" onClick={clearEffects}>مسح المؤثرات المحفوظة</Button>
+              </div>
             </div>
           </div>
         </div>
