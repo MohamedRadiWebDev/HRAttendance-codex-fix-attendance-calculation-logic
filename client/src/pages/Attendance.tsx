@@ -166,8 +166,10 @@ export default function Attendance() {
   }, [effects]);
 
   const effectsInPeriod = useMemo(() => {
-    if (!dateRange.start || !dateRange.end) return 0;
-    return (effects || []).filter((e: any) => e.date >= dateRange.start && e.date <= dateRange.end).length;
+    const start = dateRange.start;
+    const end = dateRange.end;
+    if (!start || !end) return 0;
+    return (effects || []).filter((e: any) => e.date >= start && e.date <= end).length;
   }, [effects, dateRange.start, dateRange.end]);
 
   const employeesByCode = useMemo(() => {

@@ -54,13 +54,17 @@ describe("integration fixtures", () => {
     const records = processAttendanceRecords({ employees: [e], punches: toPunches(e.code, midnight.punches), startDate: "2024-06-05", endDate: "2024-06-06", timezoneOffsetMinutes: 0 } as any);
     expect(records.some((r) => r.date === midnight.expected.dates[0])).toBe(true);
     expect(records.some((r) => r.date === midnight.expected.dates[1])).toBe(true);
+    const nextDay = records.find((r) => r.date === midnight.expected.dates[1]);
+    expect(nextDay?.checkIn).not.toBeNull();
   });
 
   it("overnight stay fixture", () => {
     const e = toEmployee(stay.employees[0]);
     const rules: SpecialRule[] = [{ id: 1, name: "stay", priority: 10, scope: stay.rules[0].scope, startDate: stay.rules[0].startDate, endDate: stay.rules[0].endDate, ruleType: "overnight_stay", params: {} } as any];
-    const records = processAttendanceRecords({ employees: [e], punches: toPunches(e.code, stay.punches), rules, startDate: "2024-06-10", endDate: "2024-06-10" } as any);
-    expect(records[0].status).toBe(stay.expected.status);
+    const records = processAttendanceRecords({ employees: [e], punches: toPunches(e.code, stay.punches), rules, startDate: "2024-06-10", endDate: "2024-06-11" } as any);
+    expect(records.length).toBe(2);
+    expect(records[0].status).toBe(stay.expected.statuses[0]);
+    expect(records[1].status).toBe(stay.expected.statuses[1]);
   });
 
   it("friday+holiday+termination fixture", () => {
@@ -69,6 +73,9 @@ describe("integration fixtures", () => {
     const records = processAttendanceRecords({ employees: [e], punches: toPunches(e.code, fh.punches), officialHolidays, startDate: "2024-06-07", endDate: "2024-06-09", timezoneOffsetMinutes: 0 } as any);
     expect(records.some((r) => r.date === "2024-06-07")).toBe(true);
     expect(records.some((r) => r.date === "2024-06-08")).toBe(true);
-    expect(records.some((r) => r.status === "Termination Period")).toBe(true);
+    const term = records.find((r) => r.status === "Termination Period");
+    expect(term).toBeDefined();
+    expect(term?.leaveDeductionDays).toBe(1);
+    expect((term?.penalties as any[] | undefined)?.some((p) => p.type === "غياب")).toBe(false);
   });
 });

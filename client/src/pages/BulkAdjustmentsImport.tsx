@@ -344,7 +344,7 @@ export default function BulkAdjustmentsImport() {
       <div className="mr-72 min-h-screen flex flex-col">
         <main className="flex-1 overflow-y-auto p-6 md:p-8">
           <div className="max-w-6xl mx-auto space-y-6">
-            <Header title="استيراد المؤثرات" subtitle="ملف Excel موحد للتعديلات والإجازات والغياب" />
+            <Header title="استيراد المؤثرات" />
 
             <div className="rounded-2xl border bg-white p-5 space-y-4">
               <div className="flex flex-wrap items-center gap-3">

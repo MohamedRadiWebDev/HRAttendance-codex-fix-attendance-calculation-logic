@@ -33,15 +33,15 @@ export default function Employees() {
   const [filters, setFilters] = useState({ sector: "all", branch: "all", department: "all" });
 
   const sectors = useMemo(
-    () => Array.from(new Set(employees?.map((emp) => emp.sector).filter(Boolean) || [])),
+    () => Array.from(new Set(employees?.map((emp) => emp.sector).filter((value): value is string => Boolean(value)) || [])),
     [employees]
   );
   const branches = useMemo(
-    () => Array.from(new Set(employees?.map((emp) => emp.branch).filter(Boolean) || [])),
+    () => Array.from(new Set(employees?.map((emp) => emp.branch).filter((value): value is string => Boolean(value)) || [])),
     [employees]
   );
   const departments = useMemo(
-    () => Array.from(new Set(employees?.map((emp) => emp.department).filter(Boolean) || [])),
+    () => Array.from(new Set(employees?.map((emp) => emp.department).filter((value): value is string => Boolean(value)) || [])),
     [employees]
   );
   

@@ -206,7 +206,7 @@ export const AttendanceStoreProvider = ({ children }: { children: React.ReactNod
       window.clearTimeout(persistenceTimerRef.current);
     }
     persistenceTimerRef.current = window.setTimeout(() => {
-      persistState(stateRef.current).catch(() => {
+      persistState(stateRef.current as any).catch(() => {
         // ignore persistence errors
       });
     }, 400);

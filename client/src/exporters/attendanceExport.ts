@@ -78,6 +78,13 @@ export const buildAttendanceExportRows = ({
     officialHolidayAttendance: number;
     compDayCredits: number;
     absenceDays: number;
+    excusedAbsenceDays: number;
+    leaveDeductionDays: number;
+    terminationPeriodDays: number;
+    compDaysFriday: number;
+    compDaysOfficial: number;
+    compDaysTotal: number;
+    lastPunchDate: string;
     totalLate: number;
     totalEarlyLeave: number;
     totalMissingStamp: number;
