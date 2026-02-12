@@ -21,6 +21,7 @@ import Import from "@/pages/Import";
 import Rules from "@/pages/Rules";
 import Adjustments from "@/pages/Adjustments";
 import BulkAdjustmentsImport from "@/pages/BulkAdjustmentsImport";
+import Effects from "@/pages/Effects";
 import Leaves from "@/pages/Leaves";
 import BackupRestore from "@/pages/BackupRestore";
 import { clearPersistedState, exportIncompatibleBackup, getStorageCompatibility } from "@/store/persistence";
@@ -38,6 +39,7 @@ function Router() {
       <Route path="/adjustments" component={Adjustments} />
       <Route path="/bulk-adjustments" component={BulkAdjustmentsImport} />
       <Route path="/effects-import" component={BulkAdjustmentsImport} />
+      <Route path="/effects" component={Effects} />
       <Route path="/leaves" component={Leaves} />
       <Route path="/backup" component={BackupRestore} />
       <Route component={NotFound} />

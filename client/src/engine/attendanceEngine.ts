@@ -1,4 +1,5 @@
 import { normalizeEmpCode, parseRuleScope } from "@shared/rule-scope";
+import { normalizeEmployeeCode } from "@shared/employee-code";
 import type {
   Adjustment,
   AttendanceRecord,
@@ -283,6 +284,8 @@ export type ImportedEffect = {
   date: string;
   from?: string;
   to?: string;
+  fromTime?: string;
+  toTime?: string;
   type: string;
   status?: string;
   note?: string;
@@ -320,8 +323,8 @@ export const applyEffectsToDailyRecord = ({
 
   dayEffects.forEach((effect) => {
     const type = normalizeEffectType(effect.type);
-    const from = (effect.from || "").trim();
-    const to = (effect.to || "").trim();
+    const from = String(effect.fromTime || effect.from || "").trim();
+    const to = String(effect.toTime || effect.to || "").trim();
 
     if (type === "مأمورية") {
       if (from && to) missionRanges.push({ from, to });
@@ -387,20 +390,22 @@ export type ProcessAttendanceParams = {
   endDate: string;
   timezoneOffsetMinutes?: number;
   workedOnOfficialHolidayOverrides?: Map<string, boolean>;
+  employeeCodes?: string[];
 };
 
 export const processAttendanceRecords = ({
   employees,
   punches,
-  rules,
-  leaves,
-  officialHolidays,
-  adjustments,
+  rules = [],
+  leaves = [],
+  officialHolidays = [],
+  adjustments = [],
   effects = [],
   startDate,
   endDate,
   timezoneOffsetMinutes,
   workedOnOfficialHolidayOverrides,
+  employeeCodes,
 }: ProcessAttendanceParams): AttendanceRecord[] => {
   const offsetMinutes = Number.isFinite(Number(timezoneOffsetMinutes))
     ? Number(timezoneOffsetMinutes)
@@ -435,14 +440,14 @@ export const processAttendanceRecords = ({
 
   const adjustmentsByEmployeeDate = new Map<string, Adjustment[]>();
   adjustments.forEach((adjustment) => {
-    const key = `${adjustment.employeeCode}__${adjustment.date}`;
+    const key = `${normalizeEmployeeCode(adjustment.employeeCode)}__${adjustment.date}`;
     const existing = adjustmentsByEmployeeDate.get(key) || [];
     existing.push(adjustment);
     adjustmentsByEmployeeDate.set(key, existing);
   });
   const effectsByEmpDate = new Map<string, ImportedEffect[]>();
   effects.forEach((effect) => {
-    const key = `${effect.employeeCode}__${effect.date}`;
+    const key = `${normalizeEmployeeCode(effect.employeeCode)}__${effect.date}`;
     const existing = effectsByEmpDate.get(key) || [];
     existing.push(effect);
     effectsByEmpDate.set(key, existing);
@@ -452,11 +457,16 @@ export const processAttendanceRecords = ({
   const records: AttendanceRecord[] = [];
   let recordId = 1;
 
-  for (const employee of employees) {
-    const normalizedEmployeeCode = String(employee.code ?? "").trim();
+  const normalizedTargets = new Set((employeeCodes || []).map((code) => normalizeEmployeeCode(code)).filter(Boolean));
+  const employeesToProcess = normalizedTargets.size > 0
+    ? employees.filter((employee) => normalizedTargets.has(normalizeEmployeeCode(employee.code)))
+    : employees;
+
+  for (const employee of employeesToProcess) {
+    const normalizedEmployeeCode = normalizeEmployeeCode(employee.code);
     const punchesByDate = new Map<string, BiometricPunch[]>();
     punches.forEach((punch) => {
-      if (punch.employeeCode !== employee.code) return;
+      if (normalizeEmployeeCode(punch.employeeCode) !== normalizedEmployeeCode) return;
       const localPunch = toLocal(punch.punchDatetime);
       const py = localPunch.getUTCFullYear();
       const pm = String(localPunch.getUTCMonth() + 1).padStart(2, "0");
@@ -615,8 +625,8 @@ export const processAttendanceRecords = ({
       const isLeaveDay = Boolean(leaveRule || matchedLeaves.length > 0);
       const hasOvernightStay = activeRules.some((rule) => rule.ruleType === "overnight_stay");
 
-      const baseDayAdjustments = adjustmentsByEmployeeDate.get(`${employee.code}__${dateStr}`) || [];
-      const dayEffects = effectsByEmpDate.get(`${employee.code}__${dateStr}`) || [];
+      const baseDayAdjustments = adjustmentsByEmployeeDate.get(`${normalizedEmployeeCode}__${dateStr}`) || [];
+      const dayEffects = effectsByEmpDate.get(`${normalizedEmployeeCode}__${dateStr}`) || [];
       const { mergedAdjustments: dayAdjustments, notes: effectNotes } = applyEffectsToDailyRecord({
         employeeCode: employee.code,
         dateStr,
@@ -681,7 +691,7 @@ export const processAttendanceRecords = ({
       }
 
       if (isOfficialHoliday) {
-        const overrideKey = `${employee.code}__${dateStr}`;
+        const overrideKey = `${normalizedEmployeeCode}__${dateStr}`;
         const override = workedOnOfficialHolidayOverrides?.get(overrideKey);
         const hasMission = dayAdjustments.some((adj) => adj.type === "مأمورية");
         const autoWorked = Boolean(checkIn || checkOut) || totalHours > 0 || hasMission;
