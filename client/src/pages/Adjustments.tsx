@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { Link } from "wouter";
 import { Sidebar } from "@/components/Sidebar";
 import { Header } from "@/components/Header";
 import { Button } from "@/components/ui/button";
@@ -44,7 +45,10 @@ export default function Adjustments() {
                   onChange={(e) => setSearchTerm(e.target.value)}
                 />
               </div>
-              <AddAdjustmentDialog />
+              <div className="flex gap-2">
+                <Link href="/effects"><Button variant="outline">عرض كل المؤثرات</Button></Link>
+                <AddAdjustmentDialog />
+              </div>
             </div>
 
             <div className="bg-white rounded-2xl border border-border/50 shadow-sm overflow-hidden">
