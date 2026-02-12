@@ -13,9 +13,8 @@ import { useAttendanceStore } from "@/store/attendanceStore";
 import { useEffectsStore, type Effect } from "@/store/effectsStore";
 import { applyEffectsToState } from "@/effects/applyEffects";
 import { normalizeEmployeeCode } from "@shared/employee-code";
-import { buildEffectsTemplateWorkbook, parseEffectsSheet } from "@/effects/effectsImport";
+import { buildEffectsTemplateWorkbook, EFFECT_EXPORT_HEADERS, parseEffectsSheet } from "@/effects/effectsImport";
 
-const EXPORT_HEADERS = ["الكود", "الاسم", "التاريخ", "من", "إلى", "النوع", "الحالة", "ملاحظة"];
 const weekDays = ["الأحد", "الاثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة", "السبت"];
 
 export default function Effects() {
@@ -41,6 +40,8 @@ export default function Effects() {
   const [typeFilter, setTypeFilter] = useState("all");
   const [editRow, setEditRow] = useState<Effect | null>(null);
   const [validation, setValidation] = useState<{ invalidRows: Array<{ rowIndex: number; reason?: string }> }>({ invalidRows: [] });
+  const [bulkDeleteStart, setBulkDeleteStart] = useState("");
+  const [bulkDeleteEnd, setBulkDeleteEnd] = useState("");
 
   const employeeMap = useMemo(() => new Map((employees || []).map((e) => [normalizeEmployeeCode(e.code), e])), [employees]);
   const types = useMemo(() => Array.from(new Set(effects.map((e) => e.type))).sort(), [effects]);
@@ -100,7 +101,7 @@ export default function Effects() {
       الحالة: row.status || "",
       ملاحظة: row.note || "",
     }));
-    const ws = XLSX.utils.json_to_sheet(data, { header: EXPORT_HEADERS });
+    const ws = XLSX.utils.json_to_sheet(data, { header: EFFECT_EXPORT_HEADERS as unknown as string[] });
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "المؤثرات");
     XLSX.writeFile(wb, "effects-export.xlsx");
@@ -133,6 +134,18 @@ export default function Effects() {
                 <Input type="file" accept=".xlsx,.xls" className="max-w-sm" onChange={(e) => e.target.files?.[0] && handleImport(e.target.files[0])} />
                 <Button variant="outline" onClick={exportFiltered}>تصدير القائمة</Button>
                 <Button variant="outline" onClick={() => XLSX.writeFile(buildEffectsTemplateWorkbook(), "effects-template.xlsx")}>تحميل قالب جاهز</Button>
+                <Input type="date" className="w-40" value={bulkDeleteStart} onChange={(e) => setBulkDeleteStart(e.target.value)} />
+                <Input type="date" className="w-40" value={bulkDeleteEnd} onChange={(e) => setBulkDeleteEnd(e.target.value)} />
+                <Button variant="destructive" onClick={() => {
+                  if (!bulkDeleteStart || !bulkDeleteEnd) {
+                    toast({ title: "تنبيه", description: "حدد فترة الحذف", variant: "destructive" });
+                    return;
+                  }
+                  const next = useEffectsStore.getState().effects.filter((e) => !(e.date >= bulkDeleteStart && e.date <= bulkDeleteEnd));
+                  useEffectsStore.getState().setEffects(next as any);
+                  reapply(next as any);
+                  toast({ title: "تم الحذف", description: "تم حذف المؤثرات في الفترة المحددة" });
+                }}>حذف جماعي بالفترة</Button>
                 <Badge className="mr-auto">صالح: {Math.max(0, filtered.length)} | غير صالح آخر استيراد: {validation.invalidRows.length}</Badge>
               </div>
 

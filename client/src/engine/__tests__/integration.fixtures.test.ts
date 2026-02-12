@@ -159,4 +159,42 @@ describe("integration fixtures", () => {
     expect(withLate).toBe(0);
   });
 
+
+  it("mission effect suppresses penalties for covered window", () => {
+    const e = toEmployee({ code: "900", shiftStart: "09:00" });
+    const punches = toPunches(e.code, ["2024-06-13T09:00:00", "2024-06-13T15:00:00"]);
+
+    const withoutEffect = processAttendanceRecords({
+      employees: [e],
+      punches,
+      startDate: "2024-06-13",
+      endDate: "2024-06-13",
+      timezoneOffsetMinutes: 0,
+    } as any);
+
+    const withMission = processAttendanceRecords({
+      employees: [e],
+      punches,
+      effects: [
+        {
+          employeeCode: "900",
+          date: "2024-06-13",
+          type: "مأمورية",
+          fromTime: "09:00",
+          toTime: "17:00",
+          source: "excel",
+        },
+      ],
+      startDate: "2024-06-13",
+      endDate: "2024-06-13",
+      timezoneOffsetMinutes: 0,
+    } as any);
+
+    const penaltiesWithout = (withoutEffect[0].penalties as any[]).reduce((sum, p) => sum + Number(p.value || 0), 0);
+    const penaltiesWith = (withMission[0].penalties as any[]).reduce((sum, p) => sum + Number(p.value || 0), 0);
+
+    expect(penaltiesWithout).toBeGreaterThan(0);
+    expect(penaltiesWith).toBe(0);
+  });
+
 });
