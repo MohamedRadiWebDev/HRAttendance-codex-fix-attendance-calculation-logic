@@ -1,4 +1,5 @@
 import { useCallback, useState } from "react";
+import { normalizeEmployeeCode } from "@shared/employee-code";
 import type { InsertAdjustment, InsertLeave, InsertOfficialHoliday, InsertSpecialRule, InsertTemplate } from "@shared/schema";
 import { useAttendanceStore, type AttendanceStoreState } from "@/store/attendanceStore";
 
@@ -69,7 +70,7 @@ export function useAdjustments(filters?: { startDate?: string; endDate?: string;
   const filtered = adjustments.filter((adj) => {
     if (filters?.startDate && adj.date < filters.startDate) return false;
     if (filters?.endDate && adj.date > filters.endDate) return false;
-    if (filters?.employeeCode && adj.employeeCode !== filters.employeeCode) return false;
+    if (filters?.employeeCode && normalizeEmployeeCode(adj.employeeCode) !== normalizeEmployeeCode(filters.employeeCode)) return false;
     if (filters?.type && adj.type !== filters.type) return false;
     return true;
   });
