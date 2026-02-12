@@ -108,13 +108,12 @@ export default function Effects() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50" dir="rtl">
+    <div className="flex h-screen bg-slate-50/50" dir="rtl">
       <Sidebar />
-      <div className="mr-72 min-h-screen flex flex-col">
-        <main className="flex-1 overflow-y-auto p-6 md:p-8">
-          <div className="max-w-7xl mx-auto space-y-6">
-            <Header title="المؤثرات" />
-
+      <div className="flex-1 flex flex-col overflow-hidden">
+        <Header title="المؤثرات" />
+        <main className="flex-1 min-w-0 overflow-y-auto">
+          <div className="p-4 md:p-6 lg:p-8 max-w-7xl mx-auto space-y-6">
             <div className="rounded-2xl border bg-white p-4 space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
                 <Input placeholder="بحث بالكود/الاسم/النوع" value={search} onChange={(e) => setSearch(e.target.value)} />
