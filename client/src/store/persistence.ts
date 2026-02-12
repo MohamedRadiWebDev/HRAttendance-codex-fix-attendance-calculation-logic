@@ -51,6 +51,37 @@ const dispatchPersistenceEvent = (type: string, detail?: Record<string, unknown>
   window.dispatchEvent(new CustomEvent(type, { detail }));
 };
 
+
+const migratePersistedState = (raw: any): PersistedState | null => {
+  if (!raw || typeof raw !== "object") return null;
+  if (raw.schemaVersion === STORAGE_SCHEMA_VERSION && raw.state) return raw as PersistedState;
+
+  // Legacy shape fallback: assume payload without schemaVersion
+  if (raw.state && typeof raw.state === "object") {
+    return {
+      schemaVersion: STORAGE_SCHEMA_VERSION,
+      savedAt: String(raw.savedAt || new Date().toISOString()),
+      state: {
+        employees: raw.state.employees || [],
+        rules: raw.state.rules || [],
+        adjustments: raw.state.adjustments || [],
+        leaves: raw.state.leaves || [],
+        officialHolidays: raw.state.officialHolidays || [],
+        attendanceRecords: raw.state.attendanceRecords || [],
+        config: raw.state.config || {
+          autoBackupEnabled: false,
+          attendanceStartDate: null,
+          attendanceEndDate: null,
+          defaultPermissionMinutes: 120,
+          defaultHalfDayMinutes: 240,
+          defaultHalfDaySide: "صباح",
+        },
+        nextIds: raw.state.nextIds || { employee: 1, rule: 1, adjustment: 1, leave: 1, record: 1 },
+      },
+    };
+  }
+  return null;
+};
 const isQuotaError = (error: unknown) => {
   if (!(error instanceof DOMException)) return false;
   return error.name === "QuotaExceededError" || error.name === "NS_ERROR_DOM_QUOTA_REACHED" || error.code === 22;
@@ -176,8 +207,9 @@ export const getStorageCompatibility = (): CompatibilityStatus => {
   const raw = localStorage.getItem(STORAGE_KEY);
   if (!raw) return { status: "none" };
   try {
-    const parsed = JSON.parse(raw) as PersistedState;
-    if (parsed.schemaVersion !== STORAGE_SCHEMA_VERSION) {
+    const parsed = JSON.parse(raw);
+    const migrated = migratePersistedState(parsed);
+    if (!migrated) {
       return { status: "incompatible", reason: "schema" };
     }
     return { status: "ok" };
@@ -202,7 +234,8 @@ export const loadPersistedState = async () => {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return { status: "none" as const, payload: null };
-    const parsed = JSON.parse(raw) as PersistedState;
+    const parsed = migratePersistedState(JSON.parse(raw));
+    if (!parsed) return { status: "incompatible" as const, payload: null };
 
     const punches = await (async () => {
       try {
@@ -211,6 +244,8 @@ export const loadPersistedState = async () => {
         return loadPunchesFromLocalStorage();
       }
     })();
+
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(parsed));
 
     return {
       status: "ok" as const,

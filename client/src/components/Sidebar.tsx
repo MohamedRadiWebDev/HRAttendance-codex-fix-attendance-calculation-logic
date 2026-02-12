@@ -10,7 +10,8 @@ import {
   Briefcase,
   ClipboardList,
   Archive,
-  Sparkles
+  Sparkles,
+  Bug
 } from "lucide-react";
 
 const navigation = [
@@ -24,6 +25,7 @@ const navigation = [
   { name: 'القواعد والورديات', href: '/rules', icon: Settings },
   { name: 'استيراد بيانات', href: '/import', icon: Upload },
   { name: 'النسخ الاحتياطي', href: '/backup', icon: Archive },
+  { name: 'التشخيص', href: '/diagnostics', icon: Bug },
 ];
 
 export function Sidebar() {

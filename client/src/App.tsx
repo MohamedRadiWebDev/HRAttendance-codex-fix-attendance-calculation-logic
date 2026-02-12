@@ -23,10 +23,24 @@ import Adjustments from "@/pages/Adjustments";
 import Effects from "@/pages/Effects";
 import Leaves from "@/pages/Leaves";
 import BackupRestore from "@/pages/BackupRestore";
+import Diagnostics from "@/pages/Diagnostics";
 import { clearPersistedState, exportIncompatibleBackup, getStorageCompatibility } from "@/store/persistence";
 import { useToast } from "@/hooks/use-toast";
+import { AppErrorBoundary } from "@/components/AppErrorBoundary";
+import { pushDiagnosticError } from "@/lib/errorHandling";
 
 function Router() {
+
+  useEffect(() => {
+    const onError = (event: ErrorEvent) => pushDiagnosticError(event.error || event.message, "window.error");
+    const onUnhandled = (event: PromiseRejectionEvent) => pushDiagnosticError(event.reason, "unhandledrejection");
+    window.addEventListener("error", onError);
+    window.addEventListener("unhandledrejection", onUnhandled);
+    return () => {
+      window.removeEventListener("error", onError);
+      window.removeEventListener("unhandledrejection", onUnhandled);
+    };
+  }, []);
   return (
     <Switch>
       <Route path="/" component={Dashboard} />
@@ -41,6 +55,7 @@ function Router() {
       <Route path="/effects" component={Effects} />
       <Route path="/leaves" component={Leaves} />
       <Route path="/backup" component={BackupRestore} />
+      <Route path="/diagnostics" component={Diagnostics} />
       <Route component={NotFound} />
     </Switch>
   );
@@ -72,6 +87,16 @@ function App() {
     };
   }, [toast]);
 
+
+  useEffect(() => {
+    const appErrorHandler = (event: Event) => {
+      const detail = (event as CustomEvent).detail as { message?: string } | undefined;
+      if (!detail?.message) return;
+      toast({ title: "خطأ تشغيلي", description: detail.message, variant: "destructive" });
+    };
+    window.addEventListener("app:error", appErrorHandler);
+    return () => window.removeEventListener("app:error", appErrorHandler);
+  }, [toast]);
   const handleExportIncompatible = async () => {
     const blob = await exportIncompatibleBackup();
     const url = URL.createObjectURL(blob);
@@ -91,7 +116,9 @@ function App() {
   return (
     <TooltipProvider>
       <Toaster />
-      <Router />
+      <AppErrorBoundary>
+        <Router />
+      </AppErrorBoundary>
       <AlertDialog open={showIncompatible}>
         <AlertDialogContent>
           <AlertDialogHeader>

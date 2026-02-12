@@ -536,3 +536,26 @@ Use this checklist to avoid breaking attendance logic (especially البصمة /
   2. include at least one regression scenario for attendance logic changes
   3. never modify parser/time logic without before/after fixture validation
 
+
+
+## Smart Reprocess (إعادة معالجة ذكية)
+
+- The Attendance screen now supports **smart reprocess** in addition to full reprocess.
+- Smart mode reprocesses only the employee codes currently inside the active filtered result set, for the selected date range.
+- Full reprocess remains available and unchanged.
+
+## Effects time formats accepted on import
+
+Effects importer accepts the following time value shapes for columns `من` and `الي`:
+- Excel time fraction (e.g. `0.375` => `09:00`).
+- Excel datetime serial numbers (time extracted from fractional part).
+- JS `Date` cells returned by xlsx.
+- Text values like `9`, `9:0`, `09:00`, `09:00:00`, `9 AM`, `9:30 PM`, `09:00 ص`, `12:30 م`.
+
+All parsed values are normalized to `HH:mm` before validation/storage.
+
+## Performance notes
+
+- Large result sets use memoized derived selectors and virtualized row windows in heavy screens to reduce render cost.
+- Effects parsing and matching uses normalized keys (`employeeCode + date`) to avoid repeated scans and reduce reprocess overhead.
+- Export now performs pre-flight validation (headers/dates/employee code+name) to fail gracefully with Arabic error toasts instead of runtime crashes.

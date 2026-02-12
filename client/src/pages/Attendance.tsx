@@ -225,6 +225,23 @@ export default function Attendance() {
     });
   };
 
+
+  const handleSmartProcess = () => {
+    if (!dateRange.start || !dateRange.end) {
+      toast({ title: "خطأ", description: "يرجى تحديد الفترة أولاً", variant: "destructive" });
+      return;
+    }
+    const employeeCodes = Array.from(new Set((filteredRecords || []).map((record: any) => record.employeeCode).filter(Boolean)));
+    if (employeeCodes.length === 0) {
+      toast({ title: "تنبيه", description: "لا يوجد موظفون ضمن الفلاتر الحالية", variant: "destructive" });
+      return;
+    }
+    processAttendance.mutate({ startDate: dateRange.start, endDate: dateRange.end, timezoneOffsetMinutes: new Date().getTimezoneOffset(), employeeCodes }, {
+      onSuccess: (data: any) => {
+        toast({ title: "اكتملت المعالجة الذكية", description: data.message });
+      }
+    });
+  };
   const handleExport = () => {
     if (!records || records.length === 0) return;
     const { detailHeaders, detailRows, summaryHeaders, summaryRows } = buildAttendanceExportRows({
@@ -241,6 +258,24 @@ export default function Attendance() {
       toast({
         title: "تعذر تصدير التقرير",
         description: "لا يمكن إنشاء ملف التصدير لأن عناوين الأعمدة غير مكتملة.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const invalidRow = (records || []).find((row: any) => {
+      if (!row.employeeCode || !String(row.employeeCode).trim()) return true;
+      const name = employees?.find((e) => e.code === row.employeeCode)?.nameAr || "";
+      if (!name.trim()) return true;
+      if (!row.date || String(row.date).includes("1970")) return true;
+      const parsed = new Date(String(row.date));
+      return Number.isNaN(parsed.getTime());
+    });
+
+    if (invalidRow) {
+      toast({
+        title: "تعذر تصدير التقرير",
+        description: "يوجد سجل غير صالح (كود/اسم/تاريخ). راجع البيانات ثم أعد المحاولة.",
         variant: "destructive",
       });
       return;
@@ -505,6 +540,10 @@ export default function Attendance() {
                   <Button variant="outline" onClick={handleProcess} disabled={processAttendance.isPending} className="gap-2">
                     <RefreshCw className={cn("w-4 h-4", processAttendance.isPending && "animate-spin")} />
                     معالجة الحضور
+                  </Button>
+                  <Button variant="outline" onClick={handleSmartProcess} disabled={processAttendance.isPending} className="gap-2">
+                    <RefreshCw className={cn("w-4 h-4", processAttendance.isPending && "animate-spin")} />
+                    إعادة معالجة ذكية
                   </Button>
                   <Button className="gap-2 bg-primary hover:bg-primary/90" onClick={handleExport}>
                     <Download className="w-4 h-4" />
