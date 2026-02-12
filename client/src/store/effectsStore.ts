@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { normalizeEmployeeCode } from "@shared/employee-code";
+import { normalizeEffectDateKey, normalizeEffectTimeKey, normalizeEffectType } from "@shared/effect-normalization";
 
 export type EffectSource = "manual" | "excel";
 
@@ -37,8 +38,8 @@ const toTimeValue = (value: unknown) => String(value || "").trim();
 const migrateEffect = (row: any): Effect | null => {
   if (!row) return null;
   const employeeCode = normalizeEmployeeCode(row.employeeCode || "");
-  const date = String(row.date || "").trim();
-  const type = String(row.type || "").trim();
+  const date = normalizeEffectDateKey(row.date);
+  const type = normalizeEffectType(row.type);
   if (!employeeCode || !date || !type) return null;
   const now = new Date().toISOString();
   return {
@@ -46,8 +47,8 @@ const migrateEffect = (row: any): Effect | null => {
     employeeCode,
     employeeName: row.employeeName ? String(row.employeeName) : undefined,
     date,
-    fromTime: toTimeValue(row.fromTime ?? row.from),
-    toTime: toTimeValue(row.toTime ?? row.to),
+    fromTime: normalizeEffectTimeKey(toTimeValue(row.fromTime ?? row.from)),
+    toTime: normalizeEffectTimeKey(toTimeValue(row.toTime ?? row.to)),
     type,
     status: row.status ? String(row.status) : undefined,
     note: row.note ? String(row.note) : undefined,

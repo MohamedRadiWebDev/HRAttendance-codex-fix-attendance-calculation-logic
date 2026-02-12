@@ -1,6 +1,5 @@
 import { useMemo, useState } from "react";
 import * as XLSX from "xlsx";
-import { format } from "date-fns";
 import { Sidebar } from "@/components/Sidebar";
 import { Header } from "@/components/Header";
 import { Button } from "@/components/ui/button";
@@ -14,34 +13,12 @@ import { useAttendanceStore } from "@/store/attendanceStore";
 import { useEffectsStore, type Effect } from "@/store/effectsStore";
 import { applyEffectsToState } from "@/effects/applyEffects";
 import { normalizeEmployeeCode } from "@shared/employee-code";
+import { normalizeEffectDateKey, normalizeEffectTimeKey, normalizeEffectType } from "@shared/effect-normalization";
 
 const HEADERS = ["الكود", "الاسم", "التاريخ", "من", "الي", "النوع", "الحالة", "ملاحظة"];
 
 const weekDays = ["الأحد", "الاثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة", "السبت"];
 
-const excelDate = (value: unknown) => {
-  if (value instanceof Date) return format(value, "yyyy-MM-dd");
-  if (typeof value === "number") {
-    const p = XLSX.SSF.parse_date_code(value);
-    if (p) return format(new Date(Date.UTC(p.y, p.m - 1, p.d)), "yyyy-MM-dd");
-  }
-  const d = new Date(String(value || ""));
-  return Number.isNaN(d.getTime()) ? "" : format(d, "yyyy-MM-dd");
-};
-
-const excelTime = (value: unknown) => {
-  if (typeof value === "number") {
-    const sec = Math.round(value * 24 * 3600);
-    const h = String(Math.floor(sec / 3600)).padStart(2, "0");
-    const m = String(Math.floor((sec % 3600) / 60)).padStart(2, "0");
-    const s = String(sec % 60).padStart(2, "0");
-    return `${h}:${m}:${s}`;
-  }
-  const text = String(value || "").trim();
-  if (!text) return "";
-  const [h = "0", m = "0", s = "0"] = text.split(":");
-  return `${String(Number(h)).padStart(2, "0")}:${String(Number(m)).padStart(2, "0")}:${String(Number(s)).padStart(2, "0")}`;
-};
 
 export default function Effects() {
   const { toast } = useToast();
@@ -124,10 +101,10 @@ export default function Effects() {
     rows.slice(1).forEach((row, idx) => {
       const employeeCode = normalizeEmployeeCode(row[0]);
       const employeeName = String(row[1] || "").trim();
-      const date = excelDate(row[2]);
-      const fromTime = excelTime(row[3]);
-      const toTime = excelTime(row[4]);
-      const type = String(row[5] || "").trim();
+      const date = normalizeEffectDateKey(row[2]);
+      const fromTime = normalizeEffectTimeKey(row[3]);
+      const toTime = normalizeEffectTimeKey(row[4]);
+      const type = normalizeEffectType(row[5]);
       const status = String(row[6] || "").trim();
       const note = String(row[7] || "").trim();
 

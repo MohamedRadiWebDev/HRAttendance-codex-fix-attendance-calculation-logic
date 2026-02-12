@@ -55,7 +55,7 @@ describe("effects store persistence", () => {
 
     expect(restored.length).toBe(1);
     expect(restored[0].employeeCode).toBe(seed.employeeCode);
-    expect(restored[0].type).toBe(seed.type);
-    expect(restored[0].fromTime).toBe(seed.fromTime);
+    expect(restored[0].type).toBe("اذن صباحي");
+    expect(restored[0].fromTime).toBe("09:00");
   });
 });

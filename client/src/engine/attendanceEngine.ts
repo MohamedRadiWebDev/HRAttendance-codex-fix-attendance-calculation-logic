@@ -1,4 +1,5 @@
 import { normalizeEmpCode, parseRuleScope } from "@shared/rule-scope";
+import { normalizeEffectDateKey, normalizeEffectTimeKey, normalizeEffectType as normalizeUnifiedEffectType } from "@shared/effect-normalization";
 import { normalizeEmployeeCode } from "@shared/employee-code";
 import type {
   Adjustment,
@@ -291,8 +292,6 @@ export type ImportedEffect = {
   note?: string;
 };
 
-const normalizeEffectType = (type: string) => String(type || "").trim().replace("إذن", "اذن");
-
 const buildSyntheticAdjustment = (employeeCode: string, date: string, type: string, fromTime: string, toTime: string, note?: string): Adjustment => ({
   id: -1,
   employeeCode,
@@ -311,20 +310,32 @@ export const applyEffectsToDailyRecord = ({
   dateStr,
   dayAdjustments,
   dayEffects,
+  shiftStart,
+  shiftEnd,
+  defaultPermissionMinutes = 120,
+  defaultHalfDayMinutes = 240,
 }: {
   employeeCode: string;
   dateStr: string;
   dayAdjustments: Adjustment[];
   dayEffects: ImportedEffect[];
+  shiftStart: string;
+  shiftEnd: string;
+  defaultPermissionMinutes?: number;
+  defaultHalfDayMinutes?: number;
 }) => {
   const mergedAdjustments = [...dayAdjustments];
   const notes: string[] = [];
   const missionRanges: Array<{ from: string; to: string }> = [];
+  const shiftStartSeconds = timeStringToSeconds(shiftStart);
+  const shiftEndSeconds = timeStringToSeconds(shiftEnd);
+  const permissionSeconds = Math.max(0, Number(defaultPermissionMinutes || 120)) * 60;
+  const halfDaySeconds = Math.max(0, Number(defaultHalfDayMinutes || 240)) * 60;
 
   dayEffects.forEach((effect) => {
-    const type = normalizeEffectType(effect.type);
-    const from = String(effect.fromTime || effect.from || "").trim();
-    const to = String(effect.toTime || effect.to || "").trim();
+    const type = normalizeUnifiedEffectType(effect.type);
+    const from = normalizeEffectTimeKey(effect.fromTime || effect.from || "");
+    const to = normalizeEffectTimeKey(effect.toTime || effect.to || "");
 
     if (type === "مأمورية") {
       if (from && to) missionRanges.push({ from, to });
@@ -333,20 +344,16 @@ export const applyEffectsToDailyRecord = ({
     }
 
     if (type === "اذن صباحي" || type === "اذن مسائي") {
-      if (from && to) {
-        mergedAdjustments.push(buildSyntheticAdjustment(employeeCode, dateStr, type, from, to, effect.note));
-      } else {
-        notes.push(`${type} ناقص ساعات`);
-      }
+      const fromResolved = from || (type === "اذن صباحي" ? secondsToHms(shiftStartSeconds) : secondsToHms(Math.max(0, shiftEndSeconds - permissionSeconds)));
+      const toResolved = to || (type === "اذن صباحي" ? secondsToHms(shiftStartSeconds + permissionSeconds) : secondsToHms(shiftEndSeconds));
+      mergedAdjustments.push(buildSyntheticAdjustment(employeeCode, dateStr, type, fromResolved, toResolved, effect.note));
       return;
     }
 
-    if (type === "إجازة نصف يوم" || type === "إجازة نص يوم") {
-      if (from && to) {
-        mergedAdjustments.push(buildSyntheticAdjustment(employeeCode, dateStr, "إجازة نص يوم", from, to, effect.note));
-      } else {
-        notes.push("إجازة نصف يوم ناقص ساعات");
-      }
+    if (type === "اجازة نصف يوم" || type === "اجازة نص يوم") {
+      const fromResolved = from || secondsToHms(shiftStartSeconds);
+      const toResolved = to || secondsToHms(shiftStartSeconds + halfDaySeconds);
+      mergedAdjustments.push(buildSyntheticAdjustment(employeeCode, dateStr, "إجازة نص يوم", fromResolved, toResolved, effect.note));
       return;
     }
 
@@ -365,7 +372,7 @@ export const applyEffectsToDailyRecord = ({
       return;
     }
 
-    notes.push(`مؤثر غير معروف: ${effect.type}`);
+    notes.push(`Needs Mapping: ${effect.type}`);
   });
 
   if (missionRanges.length > 0) {
@@ -391,6 +398,8 @@ export type ProcessAttendanceParams = {
   timezoneOffsetMinutes?: number;
   workedOnOfficialHolidayOverrides?: Map<string, boolean>;
   employeeCodes?: string[];
+  defaultPermissionMinutes?: number;
+  defaultHalfDayMinutes?: number;
 };
 
 export const processAttendanceRecords = ({
@@ -406,6 +415,8 @@ export const processAttendanceRecords = ({
   timezoneOffsetMinutes,
   workedOnOfficialHolidayOverrides,
   employeeCodes,
+  defaultPermissionMinutes,
+  defaultHalfDayMinutes,
 }: ProcessAttendanceParams): AttendanceRecord[] => {
   const offsetMinutes = Number.isFinite(Number(timezoneOffsetMinutes))
     ? Number(timezoneOffsetMinutes)
@@ -440,14 +451,14 @@ export const processAttendanceRecords = ({
 
   const adjustmentsByEmployeeDate = new Map<string, Adjustment[]>();
   adjustments.forEach((adjustment) => {
-    const key = `${normalizeEmployeeCode(adjustment.employeeCode)}__${adjustment.date}`;
+    const key = `${normalizeEmployeeCode(adjustment.employeeCode)}__${normalizeEffectDateKey(adjustment.date)}`;
     const existing = adjustmentsByEmployeeDate.get(key) || [];
     existing.push(adjustment);
     adjustmentsByEmployeeDate.set(key, existing);
   });
   const effectsByEmpDate = new Map<string, ImportedEffect[]>();
   effects.forEach((effect) => {
-    const key = `${normalizeEmployeeCode(effect.employeeCode)}__${effect.date}`;
+    const key = `${normalizeEmployeeCode(effect.employeeCode)}__${normalizeEffectDateKey(effect.date)}`;
     const existing = effectsByEmpDate.get(key) || [];
     existing.push(effect);
     effectsByEmpDate.set(key, existing);
@@ -632,6 +643,10 @@ export const processAttendanceRecords = ({
         dateStr,
         dayAdjustments: baseDayAdjustments,
         dayEffects,
+        shiftStart: currentShiftStart,
+        shiftEnd: currentShiftEnd,
+        defaultPermissionMinutes,
+        defaultHalfDayMinutes,
       });
       effectNotes.forEach((note) => addExtraNote(dateStr, note));
       const leaveDeductionAdjustments = dayAdjustments.filter((adj) => adj.type === "إجازة بالخصم");

@@ -446,6 +446,8 @@ export const AttendanceStoreProvider = ({ children }: { children: React.ReactNod
         timezoneOffsetMinutes,
         employeeCodes,
         workedOnOfficialHolidayOverrides: overrideMap,
+        defaultPermissionMinutes: current.config.defaultPermissionMinutes,
+        defaultHalfDayMinutes: current.config.defaultHalfDayMinutes,
       });
 
       const nextRecordIdStart = current.nextIds.record;

@@ -120,4 +120,43 @@ describe("integration fixtures", () => {
     expect(withLate).toBe(0);
   });
 
+
+  it("effect morning permission without times suppresses late penalty", () => {
+    const e = toEmployee({ code: "648", shiftStart: "09:00" });
+    const punches = toPunches(e.code, ["2024-06-13T09:30:00", "2024-06-13T17:00:00"]);
+
+    const withoutEffect = processAttendanceRecords({
+      employees: [e],
+      punches,
+      startDate: "2024-06-13",
+      endDate: "2024-06-13",
+      timezoneOffsetMinutes: 0,
+    } as any);
+
+    const withEffect = processAttendanceRecords({
+      employees: [e],
+      punches,
+      effects: [
+        {
+          employeeCode: "648",
+          date: "2024-06-13",
+          type: "إذن صباحي",
+          fromTime: "",
+          toTime: "",
+          source: "excel",
+        },
+      ],
+      startDate: "2024-06-13",
+      endDate: "2024-06-13",
+      timezoneOffsetMinutes: 0,
+      defaultPermissionMinutes: 120,
+    } as any);
+
+    const withoutLate = (withoutEffect[0].penalties as any[]).filter((p) => p.type === "تأخير").reduce((sum, p) => sum + Number(p.value || 0), 0);
+    const withLate = (withEffect[0].penalties as any[]).filter((p) => p.type === "تأخير").reduce((sum, p) => sum + Number(p.value || 0), 0);
+
+    expect(withoutLate).toBeGreaterThan(0);
+    expect(withLate).toBe(0);
+  });
+
 });
