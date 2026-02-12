@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { useLocation } from "wouter";
 import * as XLSX from "xlsx";
 import { format } from "date-fns";
 import { Sidebar } from "@/components/Sidebar";
@@ -10,8 +11,8 @@ import { useToast } from "@/hooks/use-toast";
 import { useEmployees } from "@/hooks/use-employees";
 import { useAttendanceStore } from "@/store/attendanceStore";
 import { useEffectsStore, type Effect } from "@/store/effectsStore";
+import { applyEffectsToState } from "@/effects/applyEffects";
 import { resolveShiftForDate, secondsToHms, timeStringToSeconds } from "@/engine/attendanceEngine";
-import type { InsertAdjustment, InsertLeave } from "@shared/schema";
 import { normalizeEmployeeCode } from "@shared/employee-code";
 
 const EFFECT_HEADERS = ["الكود", "الاسم", "التاريخ", "من", "إلى", "النوع", "الحالة", "ملاحظة"];
@@ -100,8 +101,9 @@ export default function BulkAdjustmentsImport() {
   const config = useAttendanceStore((s) => s.config);
 
   const effects = useEffectsStore((s) => s.effects);
-  const setEffects = useEffectsStore((s) => s.setEffects);
+  const upsertEffects = useEffectsStore((s) => s.upsertEffects);
   const clearEffects = useEffectsStore((s) => s.clearEffects);
+  const [, navigate] = useLocation();
 
   const { toast } = useToast();
 
@@ -124,75 +126,41 @@ export default function BulkAdjustmentsImport() {
   const validRows = useMemo(() => validationRows.filter((r) => r.state !== "Invalid"), [validationRows]);
   const invalidRows = useMemo(() => validationRows.filter((r) => r.state === "Invalid"), [validationRows]);
 
-  const mapRowsToEffects = (rows: ParsedEffectRow[]) => rows.map<Effect>((row) => ({
-    id: `${Date.now()}_${row.rowIndex}_${Math.random().toString(36).slice(2, 8)}`,
-    employeeCode: row.employeeCode,
-    employeeName: row.employeeName,
-    date: row.date,
-    from: row.fromTime || "00:00:00",
-    to: row.toTime || "00:00:00",
-    type: row.normalizedType,
-    status: row.status,
-    note: row.note,
-    createdAt: new Date().toISOString(),
-  }));
+  const mapRowsToEffects = (rows: ParsedEffectRow[], source: "manual" | "excel" = "excel") =>
+    rows.map<Omit<Effect, "id" | "createdAt" | "updatedAt">>((row) => ({
+      employeeCode: row.employeeCode,
+      employeeName: row.employeeName,
+      date: row.date,
+      fromTime: row.fromTime || "",
+      toTime: row.toTime || "",
+      type: row.normalizedType,
+      status: row.status,
+      note: row.note,
+      source,
+    }));
 
-  const applyEffectsToAttendance = (rows: Effect[], sourceFileName?: string) => {
+  const applyEffectsToAttendance = (rows: Effect[]) => {
+
     if (!rows.length) {
       toast({ title: "تنبيه", description: "لا توجد مؤثرات محفوظة للتطبيق.", variant: "destructive" });
       return;
     }
 
-    const adjustmentMap = new Map<string, any>();
-    adjustments.forEach((adj) => adjustmentMap.set(`${adj.employeeCode}__${adj.date}__${adj.type}__${adj.fromTime}__${adj.toTime}`, adj));
-    const leaveMap = new Map<string, any>();
-    leaves.forEach((leave) => leaveMap.set(`${leave.type}__${leave.scope}__${leave.scopeValue || ""}__${leave.startDate}__${leave.endDate}`, leave));
-
-    let nextAdjustmentId = Math.max(0, ...adjustments.map((a) => a.id || 0)) + 1;
-    let nextLeaveId = Math.max(0, ...leaves.map((l) => l.id || 0)) + 1;
-
-    rows.forEach((row) => {
-      if (row.type === "إجازة رسمية" || row.type === "إجازة تحصيل") {
-        const leaveRow: InsertLeave = {
-          type: row.type === "إجازة رسمية" ? "official" : "collections",
-          scope: "emp",
-          scopeValue: row.employeeCode,
-          startDate: row.date,
-          endDate: row.date,
-          note: row.note || "",
-          createdAt: new Date(),
-        };
-        const key = `${leaveRow.type}__${leaveRow.scope}__${leaveRow.scopeValue}__${leaveRow.startDate}__${leaveRow.endDate}`;
-        if (!leaveMap.has(key)) leaveMap.set(key, { id: nextLeaveId++, ...leaveRow });
-        return;
-      }
-
-      const normalizedType = row.type === "إذن صباحي" ? "اذن صباحي" : row.type === "إذن مسائي" ? "اذن مسائي" : row.type;
-      const adjustment: InsertAdjustment = {
-        employeeCode: row.employeeCode,
-        date: row.date,
-        fromTime: row.from || "00:00:00",
-        toTime: row.to || "00:00:00",
-        type: normalizedType as any,
-        source: "effects_import",
-        sourceFileName: sourceFileName || fileName || "effects.xlsx",
-        importedAt: new Date(),
-        note: [row.note, row.status ? `الحالة: ${row.status}` : ""].filter(Boolean).join(" | "),
-      };
-      const key = `${adjustment.employeeCode}__${adjustment.date}__${adjustment.type}__${adjustment.fromTime}__${adjustment.toTime}`;
-      if (!adjustmentMap.has(key)) adjustmentMap.set(key, { id: nextAdjustmentId++, ...adjustment });
+    const { adjustments: nextAdjustments, leaves: nextLeaves, affectedDates, employeeCodes } = applyEffectsToState({
+      effects: rows,
+      adjustments,
+      leaves,
     });
 
-    setAdjustments(Array.from(adjustmentMap.values()));
-    setLeaves(Array.from(leaveMap.values()));
+    setAdjustments(nextAdjustments);
+    setLeaves(nextLeaves);
 
-    const affectedDates = Array.from(new Set(rows.map((row) => row.date))).sort();
     if (affectedDates.length > 0) {
       processAttendance({
         startDate: affectedDates[0],
         endDate: affectedDates[affectedDates.length - 1],
         timezoneOffsetMinutes: new Date().getTimezoneOffset(),
-        employeeCodes: Array.from(new Set(rows.map((row) => normalizeEmployeeCode(row.employeeCode)).filter(Boolean))),
+        employeeCodes,
       });
     }
 
@@ -316,12 +284,13 @@ export default function BulkAdjustmentsImport() {
       return;
     }
 
-    const importedEffects = mapRowsToEffects(validParsed);
-    setEffects(importedEffects);
-    applyEffectsToAttendance(importedEffects, file.name);
+    const importedEffects = mapRowsToEffects(validParsed, "excel");
+    const result = upsertEffects(importedEffects);
+    applyEffectsToAttendance(useEffectsStore.getState().effects);
+    toast({ title: "نجاح", description: `تم حفظ ${result.inserted + result.updated} مؤثر.` });
+    navigate("/effects");
   };
 
-  const applySavedEffects = () => applyEffectsToAttendance(effects, fileName);
 
   const exportTemplate = () => {
     const wb = XLSX.utils.book_new();
@@ -404,8 +373,7 @@ export default function BulkAdjustmentsImport() {
                 <div>غير صالحة: <Badge variant="destructive">{invalidRows.length}</Badge></div>
               </div>
               <div className="flex flex-wrap gap-3">
-                <Button variant="outline" onClick={applySavedEffects}>إعادة تطبيق المؤثرات المحفوظة</Button>
-                <Button variant="ghost" onClick={clearEffects}>مسح المؤثرات المحفوظة</Button>
+                                <Button variant="ghost" onClick={clearEffects}>مسح المؤثرات المحفوظة</Button>
               </div>
             </div>
           </div>

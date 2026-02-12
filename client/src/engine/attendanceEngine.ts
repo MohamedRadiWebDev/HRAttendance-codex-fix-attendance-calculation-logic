@@ -284,6 +284,8 @@ export type ImportedEffect = {
   date: string;
   from?: string;
   to?: string;
+  fromTime?: string;
+  toTime?: string;
   type: string;
   status?: string;
   note?: string;
@@ -321,8 +323,8 @@ export const applyEffectsToDailyRecord = ({
 
   dayEffects.forEach((effect) => {
     const type = normalizeEffectType(effect.type);
-    const from = (effect.from || "").trim();
-    const to = (effect.to || "").trim();
+    const from = String(effect.fromTime || effect.from || "").trim();
+    const to = String(effect.toTime || effect.to || "").trim();
 
     if (type === "مأمورية") {
       if (from && to) missionRanges.push({ from, to });

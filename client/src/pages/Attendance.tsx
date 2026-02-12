@@ -775,11 +775,11 @@ export default function Attendance() {
                   ) : (
                     <div className="space-y-2">
                       {(effectsByKey.get(`${effectsRecord.employeeCode}__${effectsRecord.date}`) || []).map((effect: any) => {
-                        const missingHours = (["اذن صباحي", "اذن مسائي", "إذن صباحي", "إذن مسائي", "إجازة نصف يوم", "إجازة نص يوم"].includes(effect.type)) && (!effect.from || !effect.to);
+                        const missingHours = (["اذن صباحي", "اذن مسائي", "إذن صباحي", "إذن مسائي", "إجازة نصف يوم", "إجازة نص يوم"].includes(effect.type)) && (!(effect.fromTime || effect.from) || !(effect.toTime || effect.to));
                         return (
                           <div key={effect.id} className="rounded-lg border p-2">
                             <div className="font-medium">{effect.type}</div>
-                            <div className="text-xs text-muted-foreground">{effect.from || "-"} → {effect.to || "-"}</div>
+                            <div className="text-xs text-muted-foreground">{effect.fromTime || effect.from || "-"} → {effect.toTime || effect.to || "-"}</div>
                             {missingHours && <div className="text-xs text-amber-600">ناقص ساعات</div>}
                           </div>
                         );
