@@ -357,7 +357,7 @@ export const applyEffectsToDailyRecord = ({
       return;
     }
 
-    if (type === "إجازة بالخصم") {
+    if (type === "اجازة بالخصم") {
       mergedAdjustments.push(buildSyntheticAdjustment(employeeCode, dateStr, "إجازة بالخصم", "00:00:00", "00:00:00", effect.note));
       return;
     }
@@ -367,7 +367,7 @@ export const applyEffectsToDailyRecord = ({
       return;
     }
 
-    if (type === "إجازة من الرصيد") {
+    if (type === "اجازة من الرصيد") {
       mergedAdjustments.push(buildSyntheticAdjustment(employeeCode, dateStr, "إجازة من الرصيد", "00:00:00", "00:00:00", effect.note));
       return;
     }

@@ -13,16 +13,17 @@ import { useAttendanceStore } from "@/store/attendanceStore";
 import { useEffectsStore, type Effect } from "@/store/effectsStore";
 import { applyEffectsToState } from "@/effects/applyEffects";
 import { normalizeEmployeeCode } from "@shared/employee-code";
-import { normalizeEffectDateKey, normalizeEffectTimeKey, normalizeEffectType } from "@shared/effect-normalization";
+import { buildEffectsTemplateWorkbook, parseEffectsSheet } from "@/effects/effectsImport";
 
-const HEADERS = ["الكود", "الاسم", "التاريخ", "من", "الي", "النوع", "الحالة", "ملاحظة"];
-
+const EXPORT_HEADERS = ["الكود", "الاسم", "التاريخ", "من", "إلى", "النوع", "الحالة", "ملاحظة"];
 const weekDays = ["الأحد", "الاثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة", "السبت"];
-
 
 export default function Effects() {
   const { toast } = useToast();
   const { data: employees } = useEmployees();
+  const rules = useAttendanceStore((s) => s.rules);
+  const punches = useAttendanceStore((s) => s.punches);
+
   const effects = useEffectsStore((s) => s.effects);
   const upsertEffects = useEffectsStore((s) => s.upsertEffects);
   const removeEffect = useEffectsStore((s) => s.removeEffect);
@@ -38,17 +39,10 @@ export default function Effects() {
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [typeFilter, setTypeFilter] = useState("all");
-  const [sourceFilter, setSourceFilter] = useState("all");
-  const [sectorFilter, setSectorFilter] = useState("all");
-  const [departmentFilter, setDepartmentFilter] = useState("all");
-  const [branchFilter, setBranchFilter] = useState("all");
   const [editRow, setEditRow] = useState<Effect | null>(null);
+  const [validation, setValidation] = useState<{ invalidRows: Array<{ rowIndex: number; reason?: string }> }>({ invalidRows: [] });
 
   const employeeMap = useMemo(() => new Map((employees || []).map((e) => [normalizeEmployeeCode(e.code), e])), [employees]);
-
-  const sectors = useMemo(() => Array.from(new Set((employees || []).map((e) => e.sector).filter(Boolean))) as string[], [employees]);
-  const departments = useMemo(() => Array.from(new Set((employees || []).map((e) => e.department).filter(Boolean))) as string[], [employees]);
-  const branches = useMemo(() => Array.from(new Set((employees || []).map((e) => e.branch).filter(Boolean))) as string[], [employees]);
   const types = useMemo(() => Array.from(new Set(effects.map((e) => e.type))).sort(), [effects]);
 
   const filtered = useMemo(() => {
@@ -58,17 +52,10 @@ export default function Effects() {
       if (startDate && effect.date < startDate) return false;
       if (endDate && effect.date > endDate) return false;
       if (typeFilter !== "all" && effect.type !== typeFilter) return false;
-      if (sourceFilter !== "all" && effect.source !== sourceFilter) return false;
-      if (sectorFilter !== "all" && employee?.sector !== sectorFilter) return false;
-      if (departmentFilter !== "all" && employee?.department !== departmentFilter) return false;
-      if (branchFilter !== "all" && employee?.branch !== branchFilter) return false;
       if (!q) return true;
-      return [effect.employeeCode, effect.employeeName || employee?.nameAr || "", effect.type]
-        .join(" ")
-        .toLowerCase()
-        .includes(q);
+      return [effect.employeeCode, effect.employeeName || employee?.nameAr || "", effect.type].join(" ").toLowerCase().includes(q);
     });
-  }, [effects, search, startDate, endDate, typeFilter, sourceFilter, sectorFilter, departmentFilter, branchFilter, employeeMap]);
+  }, [effects, search, startDate, endDate, typeFilter, employeeMap]);
 
   const reapply = (rows: Effect[]) => {
     const applied = applyEffectsToState({ effects: rows, adjustments, leaves });
@@ -85,40 +72,21 @@ export default function Effects() {
   };
 
   const handleImport = async (file: File) => {
-    const wb = XLSX.read(await file.arrayBuffer(), { type: "array" });
-    const ws = wb.Sheets[wb.SheetNames[0]];
-    const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" }) as unknown[][];
-    const headers = (rows[0] || []).map((h) => String(h).trim());
-    const matched = HEADERS.every((h, i) => headers[i] === h);
-    if (!matched) {
-      toast({ title: "خطأ", description: "رأس ملف المؤثرات غير مطابق", variant: "destructive" });
-      return;
+    try {
+      const { validRows, invalidRows } = await parseEffectsSheet({ file, employees: employees || [], punches, rules });
+      setValidation({ invalidRows });
+
+      if (validRows.length === 0) {
+        toast({ title: "تنبيه", description: "لا توجد صفوف صالحة للاستيراد", variant: "destructive" });
+        return;
+      }
+
+      const stats = upsertEffects(validRows);
+      reapply(useEffectsStore.getState().effects);
+      toast({ title: "تم الحفظ", description: `تم حفظ ${stats.inserted + stats.updated} مؤثر${invalidRows.length ? ` مع ${invalidRows.length} صف غير صالح` : ""}` });
+    } catch (error: any) {
+      toast({ title: "خطأ", description: error?.message || "فشل قراءة الملف", variant: "destructive" });
     }
-
-    const valid: Omit<Effect, "id" | "createdAt" | "updatedAt">[] = [];
-    const invalid: string[] = [];
-
-    rows.slice(1).forEach((row, idx) => {
-      const employeeCode = normalizeEmployeeCode(row[0]);
-      const employeeName = String(row[1] || "").trim();
-      const date = normalizeEffectDateKey(row[2]);
-      const fromTime = normalizeEffectTimeKey(row[3]);
-      const toTime = normalizeEffectTimeKey(row[4]);
-      const type = normalizeEffectType(row[5]);
-      const status = String(row[6] || "").trim();
-      const note = String(row[7] || "").trim();
-
-      if (!employeeCode) return invalid.push(`صف ${idx + 2}: الكود مطلوب`);
-      if (!date) return invalid.push(`صف ${idx + 2}: تاريخ غير صالح`);
-      if (!type) return invalid.push(`صف ${idx + 2}: النوع مطلوب`);
-
-      valid.push({ employeeCode, employeeName, date, fromTime, toTime, type, status, note, source: "excel" });
-    });
-
-    const stats = upsertEffects(valid);
-    reapply(useEffectsStore.getState().effects);
-
-    toast({ title: "تم الحفظ", description: `تم حفظ ${stats.inserted + stats.updated} مؤثر${invalid.length ? ` مع ${invalid.length} صف غير صالح` : ""}` });
   };
 
   const exportFiltered = () => {
@@ -127,14 +95,14 @@ export default function Effects() {
       الاسم: row.employeeName || employeeMap.get(normalizeEmployeeCode(row.employeeCode))?.nameAr || "",
       التاريخ: row.date,
       من: row.fromTime || "",
-      الي: row.toTime || "",
+      إلى: row.toTime || "",
       النوع: row.type,
       الحالة: row.status || "",
       ملاحظة: row.note || "",
     }));
-    const ws = XLSX.utils.json_to_sheet(data, { header: HEADERS });
+    const ws = XLSX.utils.json_to_sheet(data, { header: EXPORT_HEADERS });
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Effects");
+    XLSX.utils.book_append_sheet(wb, ws, "المؤثرات");
     XLSX.writeFile(wb, "effects-export.xlsx");
   };
 
@@ -144,10 +112,10 @@ export default function Effects() {
       <div className="mr-72 min-h-screen flex flex-col">
         <main className="flex-1 overflow-y-auto p-6 md:p-8">
           <div className="max-w-7xl mx-auto space-y-6">
-            <Header title="إدارة المؤثرات" />
+            <Header title="المؤثرات" />
 
             <div className="rounded-2xl border bg-white p-4 space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-3">
+              <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
                 <Input placeholder="بحث بالكود/الاسم/النوع" value={search} onChange={(e) => setSearch(e.target.value)} />
                 <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
                 <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
@@ -158,29 +126,26 @@ export default function Effects() {
                     {types.map((type) => <SelectItem key={type} value={type}>{type}</SelectItem>)}
                   </SelectContent>
                 </Select>
-                <Select value={sourceFilter} onValueChange={setSourceFilter}>
-                  <SelectTrigger><SelectValue placeholder="المصدر" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">كل المصادر</SelectItem>
-                    <SelectItem value="excel">Excel</SelectItem>
-                    <SelectItem value="manual">Manual</SelectItem>
-                  </SelectContent>
-                </Select>
-                <Button variant="outline" onClick={() => {
-                  setSearch(""); setStartDate(""); setEndDate(""); setTypeFilter("all"); setSourceFilter("all");
-                  setSectorFilter("all"); setDepartmentFilter("all"); setBranchFilter("all");
-                }}>مسح الفلاتر</Button>
+                <Button variant="outline" onClick={() => { setSearch(""); setStartDate(""); setEndDate(""); setTypeFilter("all"); }}>مسح الفلاتر</Button>
               </div>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                <Select value={sectorFilter} onValueChange={setSectorFilter}><SelectTrigger><SelectValue placeholder="القطاع" /></SelectTrigger><SelectContent><SelectItem value="all">كل القطاعات</SelectItem>{sectors.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent></Select>
-                <Select value={departmentFilter} onValueChange={setDepartmentFilter}><SelectTrigger><SelectValue placeholder="الإدارة" /></SelectTrigger><SelectContent><SelectItem value="all">كل الإدارات</SelectItem>{departments.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent></Select>
-                <Select value={branchFilter} onValueChange={setBranchFilter}><SelectTrigger><SelectValue placeholder="الفرع" /></SelectTrigger><SelectContent><SelectItem value="all">كل الفروع</SelectItem>{branches.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent></Select>
-              </div>
+
               <div className="flex flex-wrap gap-3 items-center">
                 <Input type="file" accept=".xlsx,.xls" className="max-w-sm" onChange={(e) => e.target.files?.[0] && handleImport(e.target.files[0])} />
-                <Button variant="outline" onClick={exportFiltered}>تصدير النتائج</Button>
-                <Badge className="mr-auto">عدد المؤثرات: {filtered.length}</Badge>
+                <Button variant="outline" onClick={exportFiltered}>تصدير القائمة</Button>
+                <Button variant="outline" onClick={() => XLSX.writeFile(buildEffectsTemplateWorkbook(), "effects-template.xlsx")}>تحميل قالب جاهز</Button>
+                <Badge className="mr-auto">صالح: {Math.max(0, filtered.length)} | غير صالح آخر استيراد: {validation.invalidRows.length}</Badge>
               </div>
+
+              {validation.invalidRows.length > 0 && (
+                <div className="border rounded-lg p-3">
+                  <h4 className="font-medium mb-2">الصفوف غير الصالحة</h4>
+                  <div className="max-h-40 overflow-auto text-xs space-y-1">
+                    {validation.invalidRows.map((row) => (
+                      <div key={`invalid-${row.rowIndex}`} className="text-red-600">صف {row.rowIndex}: {row.reason || "خطأ غير معروف"}</div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="rounded-2xl border bg-white overflow-hidden">

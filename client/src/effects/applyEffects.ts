@@ -1,5 +1,6 @@
 import type { InsertAdjustment, InsertLeave } from "@shared/schema";
 import { normalizeEmployeeCode } from "@shared/employee-code";
+import { normalizeEffectType } from "@shared/effect-normalization";
 import type { Effect } from "@/store/effectsStore";
 
 export const applyEffectsToState = ({
@@ -23,9 +24,11 @@ export const applyEffectsToState = ({
     const employeeCode = normalizeEmployeeCode(effect.employeeCode);
     if (!employeeCode || !effect.date || !effect.type) return;
 
-    if (effect.type === "إجازة رسمية" || effect.type === "إجازة تحصيل") {
+    const normalizedType = normalizeEffectType(effect.type);
+
+    if (normalizedType === "اجازة رسمية" || normalizedType === "اجازة تحصيل") {
       const leaveRow: InsertLeave = {
-        type: effect.type === "إجازة رسمية" ? "official" : "collections",
+        type: normalizedType === "اجازة رسمية" ? "official" : "collections",
         scope: "emp",
         scopeValue: employeeCode,
         startDate: effect.date,
@@ -38,13 +41,13 @@ export const applyEffectsToState = ({
       return;
     }
 
-    const normalizedType = effect.type === "إذن صباحي" ? "اذن صباحي" : effect.type === "إذن مسائي" ? "اذن مسائي" : effect.type;
+    const adjustmentType = normalizedType === "اذن صباحي" ? "اذن صباحي" : normalizedType === "اذن مسائي" ? "اذن مسائي" : normalizedType;
     const adjustment: InsertAdjustment = {
       employeeCode,
       date: effect.date,
       fromTime: effect.fromTime || "00:00:00",
       toTime: effect.toTime || "00:00:00",
-      type: normalizedType as any,
+      type: adjustmentType as any,
       source: "effects_import",
       sourceFileName: "effects",
       importedAt: new Date(),
