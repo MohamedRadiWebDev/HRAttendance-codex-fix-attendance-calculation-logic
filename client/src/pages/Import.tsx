@@ -18,6 +18,45 @@ import {
   buildRulesTemplate,
 } from "@/exporters/templatesExporter";
 
+const normalizeImportHeader = (key: string) =>
+  key
+    .replace(/[\uFEFF\u200E\u200F]/g, "")
+    .replace(/["'`]/g, "")
+    .replace(/[\r\n\t]+/g, " ")
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase()
+    .replace(/أ|إ|آ/g, "ا")
+    .replace(/ة/g, "ه");
+
+const buildNormalizedRow = (row: Record<string, unknown>) => {
+  const normalized: Record<string, unknown> = {};
+  Object.keys(row).forEach((key) => {
+    normalized[normalizeImportHeader(key)] = row[key];
+  });
+  return normalized;
+};
+
+const getImportCell = (row: Record<string, unknown>, aliases: string[]) => {
+  for (const alias of aliases) {
+    const direct = row[alias];
+    if (direct !== undefined && direct !== null && String(direct).trim() !== "") {
+      return direct;
+    }
+  }
+
+  const normalizedRow = buildNormalizedRow(row);
+  for (const alias of aliases) {
+    const value = normalizedRow[normalizeImportHeader(alias)];
+    if (value !== undefined && value !== null && String(value).trim() !== "") {
+      return value;
+    }
+  }
+
+  return "";
+};
+
 export default function Import() {
   const { toast } = useToast();
   const importEmployees = useImportEmployees();
@@ -98,26 +137,26 @@ export default function Import() {
     try {
       if (activeTab === "employees") {
         const mapped = previewData.map((row: any) => ({
-          code: normalizeEmployeeCode(row['كود'] || row['Code'] || row['ID'] || ""),
-          nameAr: String(row['الاسم'] || row['Name'] || ""),
-          sector: String(row['القطاع'] || row['Sector'] || ""),
-          department: String(row['الادارة'] || row['Department'] || ""),
-          section: String(row['القسم'] || row['Section'] || ""),
-          jobTitle: String(row['الوظيفة'] || row['Job Title'] || ""),
-          branch: String(row['الفرع'] || row['Branch'] || ""),
-          governorate: String(row['المحافظة'] || row['Governorate'] || ""),
-          hireDate: String(row['تاريخ التعيين'] || row['Hire Date'] || ""),
-          terminationDate: String(row['تاريخ ترك العمل'] || row['Termination Date'] || ""),
-          terminationReason: String(row['سبب ترك العمل'] || row['Termination Reason'] || ""),
-          serviceDuration: String(row['بيان مدة الخدمة'] || row['Service Duration'] || ""),
-          directManager: String(row['اسم المدير المباشر'] || row['Direct Manager'] || ""),
-          deptManager: String(row['مدير الادارة'] || row['Dept Manager'] || ""),
-          nationalId: String(row['الرقم القومى'] || row['National ID'] || ""),
-          birthDate: String(row['تاريخ الميلاد'] || row['Birth Date'] || ""),
-          address: String(row['العنوان'] || row['Address'] || ""),
-          birthPlace: String(row['محل الميلاد'] || row['Birth Place'] || ""),
-          personalPhone: String(row['التليفون الشخصى'] || row['Personal Phone'] || ""),
-          emergencyPhone: String(row['تليفون طوارئ'] || row['Emergency Phone'] || ""),
+          code: normalizeEmployeeCode(getImportCell(row, ['كود', 'الكود', 'Code', 'ID'])),
+          nameAr: String(getImportCell(row, ['الاسم', 'Name'])),
+          sector: String(getImportCell(row, ['القطاع', 'Sector'])),
+          department: String(getImportCell(row, ['الادارة', 'الإدارة', 'Department'])),
+          section: String(getImportCell(row, ['القسم', 'Section'])),
+          jobTitle: String(getImportCell(row, ['الوظيفة', 'Job Title'])),
+          branch: String(getImportCell(row, ['الفرع', 'Branch'])),
+          governorate: String(getImportCell(row, ['المحافظة', 'Governorate'])),
+          hireDate: String(getImportCell(row, ['تاريخ التعيين', 'Hire Date'])),
+          terminationDate: String(getImportCell(row, ['تاريخ ترك العمل', 'Termination Date'])),
+          terminationReason: String(getImportCell(row, ['سبب ترك العمل', 'Termination Reason'])),
+          serviceDuration: String(getImportCell(row, ['بيان مدة الخدمة', 'Service Duration'])),
+          directManager: String(getImportCell(row, ['اسم المدير المباشر', 'Direct Manager'])),
+          deptManager: String(getImportCell(row, ['مدير الادارة', 'مدير الإدارة', 'Dept Manager'])),
+          nationalId: String(getImportCell(row, ['الرقم القومى', 'الرقم القومي', 'National ID'])),
+          birthDate: String(getImportCell(row, ['تاريخ الميلاد', 'Birth Date'])),
+          address: String(getImportCell(row, ['العنوان', 'Address'])),
+          birthPlace: String(getImportCell(row, ['محل الميلاد', 'Birth Place'])),
+          personalPhone: String(getImportCell(row, ['التليفون الشخصى', 'التليفون الشخصي', 'Personal Phone'])),
+          emergencyPhone: String(getImportCell(row, ['تليفون طوارئ', 'Emergency Phone'])),
           shiftStart: "09:00",
         })).filter(emp => emp.code && emp.nameAr);
 
