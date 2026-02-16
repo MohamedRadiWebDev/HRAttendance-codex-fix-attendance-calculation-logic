@@ -134,6 +134,26 @@ export default function Attendance() {
   }, [adjustments]);
 
 
+
+  const [desktopScrollTop, setDesktopScrollTop] = useState(0);
+  const desktopViewportHeight = 560;
+  const desktopRowHeight = 56;
+  const overscanRows = 8;
+  const desktopVirtual = useMemo(() => {
+    const rows = filteredRecords || [];
+    const start = Math.max(0, Math.floor(desktopScrollTop / desktopRowHeight) - overscanRows);
+    const visibleCount = Math.ceil(desktopViewportHeight / desktopRowHeight) + overscanRows * 2;
+    const end = Math.min(rows.length, start + visibleCount);
+    return {
+      rows: rows.slice(start, end),
+      start,
+      end,
+      topSpacer: start * desktopRowHeight,
+      bottomSpacer: Math.max(0, (rows.length - end) * desktopRowHeight),
+      total: rows.length,
+    };
+  }, [filteredRecords, desktopScrollTop]);
+
   const effectsByKey = useMemo(() => {
     const map = new Map<string, any[]>();
     (effects || []).forEach((effect: any) => {
@@ -146,8 +166,10 @@ export default function Attendance() {
   }, [effects]);
 
   const effectsInPeriod = useMemo(() => {
-    if (!dateRange.start || !dateRange.end) return 0;
-    return (effects || []).filter((e: any) => e.date >= dateRange.start && e.date <= dateRange.end).length;
+    const start = dateRange.start;
+    const end = dateRange.end;
+    if (!start || !end) return 0;
+    return (effects || []).filter((e: any) => e.date >= start && e.date <= end).length;
   }, [effects, dateRange.start, dateRange.end]);
 
   const employeesByCode = useMemo(() => {
@@ -203,14 +225,64 @@ export default function Attendance() {
     });
   };
 
+
+  const handleSmartProcess = () => {
+    if (!dateRange.start || !dateRange.end) {
+      toast({ title: "خطأ", description: "يرجى تحديد الفترة أولاً", variant: "destructive" });
+      return;
+    }
+    const employeeCodes = Array.from(new Set((filteredRecords || []).map((record: any) => record.employeeCode).filter(Boolean)));
+    if (employeeCodes.length === 0) {
+      toast({ title: "تنبيه", description: "لا يوجد موظفون ضمن الفلاتر الحالية", variant: "destructive" });
+      return;
+    }
+    processAttendance.mutate({ startDate: dateRange.start, endDate: dateRange.end, timezoneOffsetMinutes: new Date().getTimezoneOffset(), employeeCodes }, {
+      onSuccess: (data: any) => {
+        toast({ title: "اكتملت المعالجة الذكية", description: data.message });
+      }
+    });
+  };
   const handleExport = () => {
     if (!records || records.length === 0) return;
-    const { detailHeaders, detailRows, summaryRows } = buildAttendanceExportRows({
+    const { detailHeaders, detailRows, summaryHeaders, summaryRows } = buildAttendanceExportRows({
       records,
       employees: employees || [],
     });
 
-    const workbook = XLSX.utils.book_new();
+    const hasValidHeaders = Array.isArray(detailHeaders)
+      && detailHeaders.length > 0
+      && Array.isArray(summaryHeaders)
+      && summaryHeaders.length > 0;
+
+    if (!hasValidHeaders) {
+      toast({
+        title: "تعذر تصدير التقرير",
+        description: "لا يمكن إنشاء ملف التصدير لأن عناوين الأعمدة غير مكتملة.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const invalidRow = (records || []).find((row: any) => {
+      if (!row.employeeCode || !String(row.employeeCode).trim()) return true;
+      const name = employees?.find((e) => e.code === row.employeeCode)?.nameAr || "";
+      if (!name.trim()) return true;
+      if (!row.date || String(row.date).includes("1970")) return true;
+      const parsed = new Date(String(row.date));
+      return Number.isNaN(parsed.getTime());
+    });
+
+    if (invalidRow) {
+      toast({
+        title: "تعذر تصدير التقرير",
+        description: "يوجد سجل غير صالح (كود/اسم/تاريخ). راجع البيانات ثم أعد المحاولة.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      const workbook = XLSX.utils.book_new();
     const detailSheet = XLSX.utils.aoa_to_sheet(detailRows);
     const summarySheet = XLSX.utils.aoa_to_sheet(summaryRows);
     const applyHeaderStyle = (sheet: XLSX.WorkSheet, headerCount: number) => {
@@ -246,6 +318,8 @@ export default function Attendance() {
 
     detailSheet["!freeze"] = { xSplit: 0, ySplit: 1 };
     summarySheet["!freeze"] = { xSplit: 0, ySplit: 1 };
+    detailSheet["!autofilter"] = { ref: `A1:U1` };
+    summarySheet["!autofilter"] = { ref: `A1:V1` };
     detailSheet["!rtl"] = true;
     summarySheet["!rtl"] = true;
 
@@ -280,12 +354,12 @@ export default function Attendance() {
       const checkInCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: 4 })];
       if (checkInCell && checkInCell.v !== "-") {
         checkInCell.t = "n";
-        checkInCell.z = "hh:mm";
+        checkInCell.z = "hh:mm:ss";
       }
       const checkOutCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: 5 })];
       if (checkOutCell && checkOutCell.v !== "-") {
         checkOutCell.t = "n";
-        checkOutCell.z = "hh:mm";
+        checkOutCell.z = "hh:mm:ss";
       }
       const hoursCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: 6 })];
       if (hoursCell && hoursCell.v !== "-") {
@@ -358,10 +432,33 @@ export default function Attendance() {
       }
     }
 
-    XLSX.utils.book_append_sheet(workbook, detailSheet, "تفصيلي");
-    XLSX.utils.book_append_sheet(workbook, summarySheet, "ملخص");
-    XLSX.writeFile(workbook, `Attendance_${dateRange.start}_${dateRange.end}.xlsx`);
-    toast({ title: "تم التصدير", description: "تم تحميل ملف الإكسل بنجاح" });
+
+      const detailFirstRowByCode = new Map<string, number>();
+      for (let rowIndex = 1; rowIndex < detailRows.length; rowIndex += 1) {
+        const code = String(detailRows[rowIndex]?.[2] || "");
+        if (code && !detailFirstRowByCode.has(code)) detailFirstRowByCode.set(code, rowIndex + 1);
+      }
+      for (let rowIndex = 1; rowIndex < summaryRows.length; rowIndex += 1) {
+        const code = String(summaryRows[rowIndex]?.[0] || "");
+        const target = detailFirstRowByCode.get(code);
+        if (!target) continue;
+        const linkCell = XLSX.utils.encode_cell({ r: rowIndex, c: 1 });
+        const cell = summarySheet[linkCell];
+        if (!cell) continue;
+        cell.l = { Target: `#'تفصيلي'!A${target}`, Tooltip: `الانتقال لتفاصيل ${code}` };
+      }
+
+      XLSX.utils.book_append_sheet(workbook, detailSheet, "تفصيلي");
+      XLSX.utils.book_append_sheet(workbook, summarySheet, "ملخص");
+      XLSX.writeFile(workbook, `Attendance_${dateRange.start}_${dateRange.end}.xlsx`);
+      toast({ title: "تم التصدير", description: "تم تحميل ملف الإكسل بنجاح" });
+    } catch {
+      toast({
+        title: "تعذر تصدير التقرير",
+        description: "حدث خطأ أثناء إنشاء ملف التقرير. حاول مرة أخرى.",
+        variant: "destructive",
+      });
+    }
   };
 
   return (
@@ -444,6 +541,10 @@ export default function Attendance() {
                     <RefreshCw className={cn("w-4 h-4", processAttendance.isPending && "animate-spin")} />
                     معالجة الحضور
                   </Button>
+                  <Button variant="outline" onClick={handleSmartProcess} disabled={processAttendance.isPending} className="gap-2">
+                    <RefreshCw className={cn("w-4 h-4", processAttendance.isPending && "animate-spin")} />
+                    إعادة معالجة ذكية
+                  </Button>
                   <Button className="gap-2 bg-primary hover:bg-primary/90" onClick={handleExport}>
                     <Download className="w-4 h-4" />
                     تصدير التقرير
@@ -469,7 +570,7 @@ export default function Attendance() {
               )}
             </div>
 
-            <div className="flex-1 overflow-auto">
+            <div className="flex-1 overflow-auto" style={{ maxHeight: desktopViewportHeight }} onScroll={(e) => setDesktopScrollTop((e.currentTarget as HTMLDivElement).scrollTop)}>
               <table className="w-full text-sm text-right min-w-[1100px] hidden md:table">
                 <thead className="bg-slate-50 text-muted-foreground font-medium sticky top-0 z-10 shadow-sm">
                   <tr>
@@ -492,8 +593,10 @@ export default function Attendance() {
                     <tr><td colSpan={10} className="px-6 py-8 text-center text-muted-foreground">يرجى تحديد الفترة أولاً.</td></tr>
                   ) : filteredRecords?.length === 0 ? (
                     <tr><td colSpan={10} className="px-6 py-8 text-center text-muted-foreground">لا توجد سجلات في هذه الفترة. جرّب معالجة الحضور بعد استيراد البصمة.</td></tr>
-                  ) : (
-                    filteredRecords?.map((record: any) => (
+) : (
+                    <>
+                      {desktopVirtual.topSpacer > 0 && <tr><td colSpan={10} style={{ height: desktopVirtual.topSpacer }} /></tr>}
+                      {desktopVirtual.rows.map((record: any) => (
                       <tr key={record.id} className="hover:bg-slate-50/50 transition-colors cursor-pointer" onClick={() => setEffectsRecord(record)}>
                         <td className="px-6 py-4 font-mono text-muted-foreground">{record.date}</td>
                         <td className="px-6 py-4 font-medium">{record.employeeCode}</td>
@@ -600,7 +703,9 @@ export default function Attendance() {
                           </div>
                         </td>
                       </tr>
-                    ))
+                    ))}
+                      {desktopVirtual.bottomSpacer > 0 && <tr><td colSpan={10} style={{ height: desktopVirtual.bottomSpacer }} /></tr>}
+                    </>
                   )}
                 </tbody>
               </table>
@@ -709,11 +814,11 @@ export default function Attendance() {
                   ) : (
                     <div className="space-y-2">
                       {(effectsByKey.get(`${effectsRecord.employeeCode}__${effectsRecord.date}`) || []).map((effect: any) => {
-                        const missingHours = (["اذن صباحي", "اذن مسائي", "إذن صباحي", "إذن مسائي", "إجازة نصف يوم", "إجازة نص يوم"].includes(effect.type)) && (!effect.from || !effect.to);
+                        const missingHours = (["اذن صباحي", "اذن مسائي", "إذن صباحي", "إذن مسائي", "إجازة نصف يوم", "إجازة نص يوم"].includes(effect.type)) && (!(effect.fromTime || effect.from) || !(effect.toTime || effect.to));
                         return (
                           <div key={effect.id} className="rounded-lg border p-2">
                             <div className="font-medium">{effect.type}</div>
-                            <div className="text-xs text-muted-foreground">{effect.from || "-"} → {effect.to || "-"}</div>
+                            <div className="text-xs text-muted-foreground">{effect.fromTime || effect.from || "-"} → {effect.toTime || effect.to || "-"}</div>
                             {missingHours && <div className="text-xs text-amber-600">ناقص ساعات</div>}
                           </div>
                         );

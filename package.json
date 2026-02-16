@@ -8,7 +8,9 @@
     "build": "vite build",
     "preview": "vite preview",
     "check": "tsc",
-    "test": "vitest run"
+    "test": "vitest run",
+    "lint": "npm run check",
+    "format": "echo No-op format script in this environment"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
