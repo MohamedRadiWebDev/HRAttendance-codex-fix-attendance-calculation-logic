@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { processAttendanceRecords } from "@/engine/attendanceEngine";
+import { buildAttendanceExportRows } from "@/exporters/attendanceExport";
 import type { Adjustment, Employee, OfficialHoliday } from "@shared/schema";
 
 const baseEmployee: Employee = {
@@ -41,7 +42,7 @@ const buildAdjustment = (date: string, type: Adjustment["type"]): Adjustment => 
 });
 
 describe("attendance business rules", () => {
-  it("marks absent day as غياب with penalty 2 in summary math", () => {
+  it("marks absent day as غياب and summary weights it by 2", () => {
     const records = processAttendanceRecords({
       employees: [baseEmployee],
       punches: [],
@@ -54,9 +55,12 @@ describe("attendance business rules", () => {
     });
     expect(records[0].status).toBe("Absent");
     expect(records[0].penalties?.length).toBeGreaterThan(0);
+
+    const { summaryRows } = buildAttendanceExportRows({ records, employees: [baseEmployee] });
+    expect(summaryRows[1][5]).toBe(2); // weighted absence total
   });
 
-  it("marks غياب بعذر with deduction 1 and no penalties", () => {
+  it("marks غياب بعذر with weight 1 and no penalties", () => {
     const records = processAttendanceRecords({
       employees: [baseEmployee],
       punches: [],
@@ -70,6 +74,9 @@ describe("attendance business rules", () => {
     expect(records[0].status).toBe("Excused Absence");
     expect(records[0].excusedAbsenceDays).toBe(1);
     expect(records[0].penalties?.length).toBe(0);
+
+    const { summaryRows } = buildAttendanceExportRows({ records, employees: [baseEmployee] });
+    expect(summaryRows[1][5]).toBe(1); // weighted absence total with excuse
   });
 
   it("marks إجازة بالخصم with deduction and no penalties", () => {
@@ -86,6 +93,22 @@ describe("attendance business rules", () => {
     expect(records[0].status).toBe("Leave Deduction");
     expect(records[0].leaveDeductionDays).toBe(1);
     expect(records[0].penalties?.length).toBe(0);
+  });
+
+  it("counts إجازة بدل as used comp day and suppresses absence penalties", () => {
+    const records = processAttendanceRecords({
+      employees: [baseEmployee],
+      punches: [],
+      rules: [],
+      leaves: [],
+      officialHolidays: [],
+      adjustments: [buildAdjustment("2024-03-04", "إجازة بدل")],
+      startDate: "2024-03-04",
+      endDate: "2024-03-04",
+    });
+    expect(records[0].status).toBe("Leave");
+    expect(records[0].penalties?.length).toBe(0);
+    expect(records[0].compDaysUsed).toBe(1);
   });
 
   it("treats days after termination date as فترة ترك", () => {
