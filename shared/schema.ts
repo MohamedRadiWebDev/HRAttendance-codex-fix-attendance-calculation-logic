@@ -4,7 +4,7 @@ import { z } from "zod";
 
 // Enums
 export const LEAVE_TYPES = ["annual", "sick", "unpaid", "mission", "permission"] as const;
-export const ADJUSTMENT_TYPES = ["اذن صباحي", "اذن مسائي", "إجازة نص يوم", "مأمورية", "إجازة بالخصم", "غياب بعذر", "إجازة من الرصيد"] as const;
+export const ADJUSTMENT_TYPES = ["اذن صباحي", "اذن مسائي", "إجازة نص يوم", "مأمورية", "إجازة بالخصم", "غياب بعذر", "إجازة من الرصيد", "إجازة بدل"] as const;
 export const RULE_TYPES = ["custom_shift", "attendance_exempt", "penalty_override", "ignore_biometric", "overtime_overnight", "overnight_stay"] as const;
 export const PENALTY_TYPES = ["late_arrival", "early_leave", "missing_stamp", "absence"] as const;
 
@@ -108,6 +108,7 @@ export const attendanceRecords = pgTable("attendance_records", {
   compDaysFriday: doublePrecision("comp_days_friday").default(0),
   compDaysOfficial: doublePrecision("comp_days_official").default(0),
   compDaysTotal: doublePrecision("comp_days_total").default(0),
+  compDaysUsed: doublePrecision("comp_days_used").default(0),
 });
 
 export const leaves = pgTable("leaves", {
