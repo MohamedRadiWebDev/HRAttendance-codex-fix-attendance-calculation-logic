@@ -115,6 +115,32 @@ describe("export workbook checks", () => {
 
     expect(summaryHeaders[0]).toBe("الكود");
     expect(summaryHeaders[1]).toBe("الاسم");
+    expect(summaryHeaders).toEqual([
+      "الكود",
+      "الاسم",
+      "عدد أيام العمل",
+      "عدد أيام الجمعة",
+      "عدد أيام حضور الجمعة",
+      "عدد أيام الإجازات الرسمية",
+      "عدد أيام الإجازات (المحددة)",
+      "عدد أيام الغياب",
+      "عدد أيام الغياب بعذر",
+      "عدد أيام الإجازة بالخصم",
+      "فترة الترك",
+      "إجمالي الغياب (بالخصم)",
+      "اجمالي الاجازات الرسمية",
+      "اجمالي حضور الاجازات الرسمية",
+      "بدل يوم الجمع",
+      "بدل الإجازات الرسمية",
+      "بدل مكتسب",
+      "بدل مستخدم",
+      "رصيد البدل",
+      "إجمالي التأخيرات",
+      "إجمالي الانصراف المبكر",
+      "إجمالي سهو البصمة",
+      "إجمالي الجزاءات",
+      "آخر يوم بصمة",
+    ]);
     expect(summaryRows.length).toBeGreaterThan(1);
     expect(detailRows.length).toBeGreaterThan(1);
 
@@ -125,10 +151,23 @@ describe("export workbook checks", () => {
     const summaryRow = summaryRows[1];
     expect(summaryRow[0]).toBe("EMP1");
     expect(String(summaryRow[1]).trim().length).toBeGreaterThan(0);
+    expect(typeof summaryRow[23]).toBe("number");
+    expect(summaryRow[23]).toBeGreaterThan(0);
 
     // Absence weighting in summary: absenceDays * 2 + excusedAbsenceDays
     expect(summaryRow[7]).toBe(1); // absenceDays
     expect(summaryRow[11]).toBe(2); // weighted absence total
+
+    detailRows.flat().forEach((cell) => {
+      if (typeof cell === "string") {
+        expect(cell.startsWith("=")).toBe(false);
+      }
+    });
+    summaryRows.flat().forEach((cell) => {
+      if (typeof cell === "string") {
+        expect(cell.startsWith("=")).toBe(false);
+      }
+    });
 
     const flat = JSON.stringify({ detailHeaders, detailRows, summaryHeaders, summaryRows });
     expect(flat.includes("1970-01-01")).toBe(false);

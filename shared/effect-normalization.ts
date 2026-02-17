@@ -9,15 +9,34 @@ const normalizeArabicLetters = (value: string) =>
     .replace(/ة/g, "ه");
 
 export const normalizeEffectDateKey = (value: unknown): string => {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    const y = value.getFullYear();
+    const m = String(value.getMonth() + 1).padStart(2, "0");
+    const d = String(value.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+  }
+
   const text = String(value ?? "").trim();
   if (!text) return "";
-  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text;
-  const parsed = new Date(text);
-  if (Number.isNaN(parsed.getTime())) return "";
-  const y = parsed.getFullYear();
-  const m = String(parsed.getMonth() + 1).padStart(2, "0");
-  const d = String(parsed.getDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
+
+  const normalized = text
+    .replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d)))
+    .replace(/[.]/g, "/")
+    .replace(/\s+/g, "");
+
+  const isoMatch = normalized.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
+  if (isoMatch) {
+    const [, y, m, d] = isoMatch;
+    return `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
+  }
+
+  const dmyMatch = normalized.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/);
+  if (dmyMatch) {
+    const [, d, m, y] = dmyMatch;
+    return `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
+  }
+
+  return "";
 };
 
 export const normalizeEffectTimeKey = (value: unknown): string => {

@@ -147,11 +147,11 @@ export const buildAttendanceExportRows = ({
             ? "إجازة"
             : "حضور";
 
-    let lateValue: number | string = "";
-    let earlyLeaveValue: number | string = "";
-    let missingStampValue: number | string = "";
-    let absenceValue: number | string = "";
-    let totalPenalties: number | string = "";
+    let lateValue = 0;
+    let earlyLeaveValue = 0;
+    let missingStampValue = 0;
+    let absenceValue = 0;
+    let totalPenalties = 0;
     const notesTokens: string[] = [];
     const penalties = Array.isArray(record.penalties) ? (record.penalties as any[]) : [];
     const hasPenalties = penalties.length > 0;
@@ -175,42 +175,42 @@ export const buildAttendanceExportRows = ({
         }
       });
       const computedPenaltySum =
-        (typeof lateValue === "number" ? lateValue : 0) +
-        (typeof earlyLeaveValue === "number" ? earlyLeaveValue : 0) +
-        (typeof missingStampValue === "number" ? missingStampValue : 0) +
-        (typeof absenceValue === "number" ? absenceValue * 2 : 0);
-      if (computedPenaltySum > 0) {
-        totalPenalties = computedPenaltySum;
-      }
+        lateValue + earlyLeaveValue + missingStampValue + absenceValue * 2;
+      totalPenalties = computedPenaltySum;
     }
+
+    if (record.notes?.includes("مبيت")) {
+      missingStampValue = 0;
+      earlyLeaveValue = 0;
+    }
+
+    totalPenalties += excusedAbsenceDays;
 
     const notes = notesTokens.length > 0
       ? Array.from(new Set(notesTokens)).join(" + ")
       : (record.notes || "").replace(/[\r\n]+/g, " ").trim();
-
-    const isZero = (value: number | string) => typeof value === "number" && value === 0;
 
     const detailRow = [
       excelDateSerial,
       dayNames[dayIndex],
       record.employeeCode,
       employeeMap.get(record.employeeCode) || "(غير موجود بالماستر)",
-      record.checkIn ? parseTimeToSeconds(toTimeText(record.checkIn)) / 86400 : "-",
-      record.checkOut ? parseTimeToSeconds(toTimeText(record.checkOut)) / 86400 : "-",
-      typeof record.totalHours === "number" ? Number(record.totalHours.toFixed(2)) : "-",
-      record.overtimeHours && record.overtimeHours > 0 ? Number(record.overtimeHours.toFixed(2)) : "-",
+      record.checkIn ? parseTimeToSeconds(toTimeText(record.checkIn)) / 86400 : 0,
+      record.checkOut ? parseTimeToSeconds(toTimeText(record.checkOut)) / 86400 : 0,
+      typeof record.totalHours === "number" ? Number(record.totalHours.toFixed(2)) : 0,
+      typeof record.overtimeHours === "number" ? Number(record.overtimeHours.toFixed(2)) : 0,
       dayType,
-      isOfficialHoliday ? (workedOnHoliday ? "نعم" : "لا") : "-",
+      isOfficialHoliday ? (workedOnHoliday ? "نعم" : "لا") : "",
       isOfficialHoliday ? (workedOnHoliday ? 1 : 0) : "",
       status,
-      isZero(lateValue) ? "" : lateValue,
-      isZero(earlyLeaveValue) ? "" : earlyLeaveValue,
-      isZero(missingStampValue) ? "" : missingStampValue,
-      isZero(absenceValue) ? "" : absenceValue,
-      excusedAbsenceDays > 0 ? excusedAbsenceDays : "",
-      leaveDeductionDays > 0 ? leaveDeductionDays : "",
-      terminationPeriodDays > 0 ? terminationPeriodDays : "",
-      isZero(totalPenalties) ? "" : totalPenalties,
+      lateValue,
+      earlyLeaveValue,
+      missingStampValue,
+      absenceValue,
+      excusedAbsenceDays,
+      leaveDeductionDays,
+      terminationPeriodDays,
+      totalPenalties,
       notes,
     ];
 
@@ -312,7 +312,7 @@ export const buildAttendanceExportRows = ({
   const summaryRows: any[][] = [summaryHeaders];
   Array.from(summaryByEmployee.values()).forEach((summary) => {
     const summaryAbsenceTotal = summary.absenceDays * 2 + summary.excusedAbsenceDays;
-    const summaryPenaltiesTotal = summary.totalLate + summary.totalEarlyLeave + summary.totalMissingStamp + summaryAbsenceTotal + summary.leaveDeductionDays;
+    const summaryPenaltiesTotal = summary.totalLate + summary.totalEarlyLeave + summary.totalMissingStamp + summaryAbsenceTotal;
     const compEarned = summary.compDaysTotal;
     const compUsed = summary.compDaysUsed;
     const compBalance = compEarned - compUsed;
@@ -340,7 +340,7 @@ export const buildAttendanceExportRows = ({
       summary.totalEarlyLeave,
       summary.totalMissingStamp,
       summaryPenaltiesTotal,
-      summary.lastPunchDate ? toExcelDateSerial(summary.lastPunchDate) : "",
+      summary.lastPunchDate ? toExcelDateSerial(summary.lastPunchDate) : 0,
     ]);
   });
 
