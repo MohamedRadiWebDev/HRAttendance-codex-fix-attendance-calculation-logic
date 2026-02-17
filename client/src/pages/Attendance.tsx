@@ -318,14 +318,14 @@ export default function Attendance() {
 
     detailSheet["!freeze"] = { xSplit: 0, ySplit: 1 };
     summarySheet["!freeze"] = { xSplit: 0, ySplit: 1 };
-    detailSheet["!autofilter"] = { ref: `A1:U1` };
-    summarySheet["!autofilter"] = { ref: `A1:V1` };
+    detailSheet["!autofilter"] = { ref: `A1:${XLSX.utils.encode_col(detailHeaders.length - 1)}1` };
+    summarySheet["!autofilter"] = { ref: `A1:${XLSX.utils.encode_col(summaryHeaders.length - 1)}1` };
     detailSheet["!rtl"] = true;
     summarySheet["!rtl"] = true;
 
     for (let rowIndex = 1; rowIndex < detailRows.length; rowIndex += 1) {
       const isFridayRow = detailRows[rowIndex][8] === "جمعة";
-      const hasViolation = detailRows[rowIndex][19] !== "";
+      const hasViolation = Number(detailRows[rowIndex][14] || 0) > 0;
       const fill = isFridayRow
         ? "D9E8FF"
         : hasViolation
@@ -352,40 +352,33 @@ export default function Attendance() {
         dateCell.z = "yyyy-mm-dd";
       }
       const checkInCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: 4 })];
-      if (checkInCell && checkInCell.v !== "-") {
+      if (checkInCell && Number(checkInCell.v) > 0) {
         checkInCell.t = "n";
         checkInCell.z = "hh:mm:ss";
       }
       const checkOutCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: 5 })];
-      if (checkOutCell && checkOutCell.v !== "-") {
+      if (checkOutCell && Number(checkOutCell.v) > 0) {
         checkOutCell.t = "n";
         checkOutCell.z = "hh:mm:ss";
       }
       const hoursCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: 6 })];
-      if (hoursCell && hoursCell.v !== "-") {
+      if (hoursCell) {
         hoursCell.t = "n";
         hoursCell.z = "0.00";
       }
       const overtimeCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: 7 })];
-      if (overtimeCell && overtimeCell.v !== "-") {
+      if (overtimeCell) {
         overtimeCell.t = "n";
         overtimeCell.z = "0.00";
       }
-      const penaltyColumns = [12, 13, 14, 15, 16, 17, 18];
+      const penaltyColumns = [10, 11, 12, 13, 14];
       penaltyColumns.forEach((colIndex) => {
         const penaltyCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: colIndex })];
-        if (penaltyCell && penaltyCell.v !== "") {
+        if (penaltyCell) {
           penaltyCell.t = "n";
           penaltyCell.z = "0.00";
         }
       });
-      const totalPenaltyCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: 19 })];
-      if (totalPenaltyCell) {
-        const rowNumber = rowIndex + 1;
-        totalPenaltyCell.f = `M${rowNumber}+N${rowNumber}+O${rowNumber}+P${rowNumber}*2`;
-        totalPenaltyCell.t = "n";
-        totalPenaltyCell.z = "0.00";
-      }
     }
 
     for (let rowIndex = 1; rowIndex < summaryRows.length; rowIndex += 1) {
@@ -399,36 +392,17 @@ export default function Attendance() {
           fill: { patternType: "solid", fgColor: { rgb: fill } },
         };
       }
-      const dateCell = summarySheet[XLSX.utils.encode_cell({ r: rowIndex, c: 21 })];
-      if (dateCell && dateCell.v !== "") {
+      const dateCell = summarySheet[XLSX.utils.encode_cell({ r: rowIndex, c: summaryHeaders.length - 1 })];
+      if (dateCell && Number(dateCell.v) > 0) {
         dateCell.t = "n";
         dateCell.z = "yyyy-mm-dd";
       }
-      for (let colIndex = 2; colIndex <= 20; colIndex += 1) {
+      for (let colIndex = 2; colIndex < summaryHeaders.length - 1; colIndex += 1) {
         const cell = summarySheet[XLSX.utils.encode_cell({ r: rowIndex, c: colIndex })];
-        if (cell && cell.v !== "") {
+        if (cell) {
           cell.t = "n";
           cell.z = "0.00";
         }
-      }
-      const totalAbsenceCell = summarySheet[XLSX.utils.encode_cell({ r: rowIndex, c: 11 })];
-      const totalCompCell = summarySheet[XLSX.utils.encode_cell({ r: rowIndex, c: 16 })];
-      const totalPenaltyCell = summarySheet[XLSX.utils.encode_cell({ r: rowIndex, c: 20 })];
-      const rowNumber = rowIndex + 1;
-      if (totalAbsenceCell) {
-        totalAbsenceCell.f = `H${rowNumber}*2+I${rowNumber}`;
-        totalAbsenceCell.t = "n";
-        totalAbsenceCell.z = "0.00";
-      }
-      if (totalCompCell) {
-        totalCompCell.f = `O${rowNumber}+P${rowNumber}`;
-        totalCompCell.t = "n";
-        totalCompCell.z = "0.00";
-      }
-      if (totalPenaltyCell) {
-        totalPenaltyCell.f = `R${rowNumber}+S${rowNumber}+T${rowNumber}+L${rowNumber}+J${rowNumber}`;
-        totalPenaltyCell.t = "n";
-        totalPenaltyCell.z = "0.00";
       }
     }
 

@@ -6,7 +6,7 @@ import { parseTimeCell } from "@/effects/timeParser";
 import type { Employee, BiometricPunch, SpecialRule } from "@shared/schema";
 import type { Effect } from "@/store/effectsStore";
 
-export const EFFECT_EXPORT_HEADERS = ["الكود", "الاسم", "التاريخ", "من", "إلى", "النوع", "ملاحظة"] as const;
+export const EFFECT_EXPORT_HEADERS = ["الكود", "الاسم", "التاريخ", "من", "الي", "النوع", "الحالة", "ملاحظة"] as const;
 export const EFFECT_TYPE_OPTIONS = [
   "مأمورية",
   "إذن صباحي",
@@ -69,7 +69,7 @@ const resolveHeaderIndexes = (headers: unknown[]) => {
     note: findIndex(HEADER_ALIASES.note),
   };
 
-  const requiredMissing = ["code", "name", "date", "type"].filter((k) => (indexes as any)[k] < 0);
+  const requiredMissing = ["code", "name", "date", "from", "to", "type"].filter((k) => (indexes as any)[k] < 0);
   return { indexes, requiredMissing };
 };
 
@@ -134,7 +134,7 @@ export const parseEffectsSheet = async ({
 
   const { indexes, requiredMissing } = resolveHeaderIndexes(headerRow);
   if (requiredMissing.length > 0) {
-    throw new Error("رأس الملف غير مطابق. الأعمدة المطلوبة: الكود | الاسم | التاريخ | من | إلى | النوع");
+    throw new Error("رأس الملف غير مطابق. الأعمدة المطلوبة: الكود | الاسم | التاريخ | من | الي | النوع");
   }
 
   const employeeMap = new Map((employees || []).map((e) => [normalizeEmployeeCode(e.code), e]));
@@ -153,6 +153,7 @@ export const parseEffectsSheet = async ({
     let toTime = toParsed.ok ? toParsed.timeHHmm : "";
 
     const type = normalizeEffectType(row[indexes.type]);
+    const status = indexes.status >= 0 ? String(row[indexes.status] || "").trim() : "";
     const note = indexes.note >= 0 ? String(row[indexes.note] || "").trim() : "";
 
     if (!employeeCode) return invalidRows.push({ rowIndex, valid: false, reason: "الكود مطلوب" });
@@ -196,7 +197,7 @@ export const parseEffectsSheet = async ({
       fromTime,
       toTime,
       type,
-      status: "",
+      status,
       note,
       source: "excel",
     });
@@ -208,12 +209,12 @@ export const parseEffectsSheet = async ({
 export const buildEffectsTemplateWorkbook = () => {
   const data = [
     [...EFFECT_EXPORT_HEADERS],
-    ["648", "أحمد علي", "2025-01-05", "", "", "إذن صباحي", "سماح أول ساعتين"],
-    ["648", "أحمد علي", "2025-01-06", "", "", "إذن مسائي", "سماح آخر ساعتين"],
-    ["701", "منى سالم", "2025-01-07", "", "", "إجازة نص يوم", "نصف يوم"],
-    ["701", "منى سالم", "2025-01-08", "09:00", "13:00", "مأمورية", "مأمورية (نص)"],
-    ["703", "دينا شريف", "2025-01-08", "", "", "إجازة بدل", "استخدام يوم بدل"],
-    ["702", "عمرو محمد", "2025-01-09", "", "", "غياب بعذر", "مستند طبي"],
+    ["648", "أحمد علي", "2025-01-05", "", "", "إذن صباحي", "معتمد", "سماح أول ساعتين"],
+    ["648", "أحمد علي", "2025-01-06", "", "", "إذن مسائي", "معتمد", "سماح آخر ساعتين"],
+    ["701", "منى سالم", "2025-01-07", "", "", "إجازة نص يوم", "موافق", "نصف يوم"],
+    ["701", "منى سالم", "2025-01-08", "09:00", "13:00", "مأمورية", "موافق", "مأمورية (نص)"],
+    ["703", "دينا شريف", "2025-01-08", "", "", "إجازة بدل", "معتمد", "استخدام يوم بدل"],
+    ["702", "عمرو محمد", "2025-01-09", "", "", "غياب بعذر", "معتمد", "مستند طبي"],
   ];
   const ws = XLSX.utils.aoa_to_sheet(data);
   ws.D7 = { t: "n", v: 0.375, z: "hh:mm" } as any;

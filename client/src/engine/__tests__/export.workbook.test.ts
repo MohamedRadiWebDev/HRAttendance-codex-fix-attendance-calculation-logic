@@ -82,6 +82,32 @@ describe("export workbook checks", () => {
         compDaysTotal: 0,
         compDaysUsed: 0,
       },
+      {
+        id: 3,
+        employeeCode: "EMP1",
+        date: "2024-06-05",
+        checkIn: new Date("2024-06-05T09:00:00"),
+        checkOut: new Date("2024-06-05T17:00:00"),
+        totalHours: 8,
+        overtimeHours: 0,
+        status: "Official Holiday",
+        penalties: [],
+        isOvernight: false,
+        notes: "إجازة رسمية",
+        missionStart: null,
+        missionEnd: null,
+        halfDayExcused: false,
+        isOfficialHoliday: true,
+        workedOnOfficialHoliday: true,
+        compDayCredit: 1,
+        leaveDeductionDays: 0,
+        excusedAbsenceDays: 0,
+        terminationPeriodDays: 0,
+        compDaysFriday: 0,
+        compDaysOfficial: 1,
+        compDaysTotal: 1,
+        compDaysUsed: 0,
+      },
     ];
 
     const { detailHeaders, detailRows, summaryHeaders, summaryRows } = buildAttendanceExportRows({
@@ -99,16 +125,11 @@ describe("export workbook checks", () => {
       "ساعات العمل",
       "الإضافي",
       "نوع اليوم",
-      "حضر في الإجازة الرسمية؟",
-      "يوم بالبدل",
       "الحالة",
       "تأخير",
       "انصراف مبكر",
       "سهو بصمة",
       "غياب",
-      "غياب بعذر",
-      "إجازة بالخصم",
-      "فترة الترك",
       "إجمالي الجزاءات",
       "ملاحظات",
     ]);
@@ -157,6 +178,11 @@ describe("export workbook checks", () => {
     // Absence weighting in summary: absenceDays * 2 + excusedAbsenceDays
     expect(summaryRow[7]).toBe(1); // absenceDays
     expect(summaryRow[11]).toBe(2); // weighted absence total
+    expect(summaryRow[15]).toBe(1); // official holiday comp days
+    expect(summaryRow[16]).toBe(1); // earned comp days
+
+    const holidayDetailRow = detailRows.find((row) => row[0] !== "التاريخ" && row[8] === "إجازة رسمية");
+    expect(holidayDetailRow).toBeTruthy();
 
     detailRows.flat().forEach((cell) => {
       if (typeof cell === "string") {

@@ -50,16 +50,11 @@ export const buildAttendanceExportRows = ({
     "ساعات العمل",
     "الإضافي",
     "نوع اليوم",
-    "حضر في الإجازة الرسمية؟",
-    "يوم بالبدل",
     "الحالة",
     "تأخير",
     "انصراف مبكر",
     "سهو بصمة",
     "غياب",
-    "غياب بعذر",
-    "إجازة بالخصم",
-    "فترة الترك",
     "إجمالي الجزاءات",
     "ملاحظات",
   ];
@@ -200,16 +195,11 @@ export const buildAttendanceExportRows = ({
       typeof record.totalHours === "number" ? Number(record.totalHours.toFixed(2)) : 0,
       typeof record.overtimeHours === "number" ? Number(record.overtimeHours.toFixed(2)) : 0,
       dayType,
-      isOfficialHoliday ? (workedOnHoliday ? "نعم" : "لا") : "",
-      isOfficialHoliday ? (workedOnHoliday ? 1 : 0) : "",
       status,
       lateValue,
       earlyLeaveValue,
       missingStampValue,
       absenceValue,
-      excusedAbsenceDays,
-      leaveDeductionDays,
-      terminationPeriodDays,
       totalPenalties,
       notes,
     ];
@@ -311,7 +301,11 @@ export const buildAttendanceExportRows = ({
 
   const summaryRows: any[][] = [summaryHeaders];
   Array.from(summaryByEmployee.values()).forEach((summary) => {
-    const summaryAbsenceTotal = summary.absenceDays * 2 + summary.excusedAbsenceDays;
+    const summaryAbsenceTotal =
+      summary.absenceDays * 2 +
+      summary.excusedAbsenceDays +
+      summary.leaveDeductionDays +
+      summary.terminationPeriodDays;
     const summaryPenaltiesTotal = summary.totalLate + summary.totalEarlyLeave + summary.totalMissingStamp + summaryAbsenceTotal;
     const compEarned = summary.compDaysTotal;
     const compUsed = summary.compDaysUsed;

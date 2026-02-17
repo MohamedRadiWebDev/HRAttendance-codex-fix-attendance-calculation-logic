@@ -96,8 +96,9 @@ export default function Effects() {
       الاسم: row.employeeName || employeeMap.get(normalizeEmployeeCode(row.employeeCode))?.nameAr || "",
       التاريخ: row.date,
       من: row.fromTime || "",
-      إلى: row.toTime || "",
+      الي: row.toTime || "",
       النوع: row.type,
+      الحالة: row.status || "",
       ملاحظة: row.note || "",
     }));
     const ws = XLSX.utils.json_to_sheet(data, { header: EFFECT_EXPORT_HEADERS as unknown as string[] });
