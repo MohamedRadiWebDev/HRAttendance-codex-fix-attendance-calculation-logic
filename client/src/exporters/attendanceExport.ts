@@ -31,6 +31,31 @@ export type AttendanceExportResult = {
   summaryRows: any[][];
 };
 
+export const SUMMARY_HEADERS = [
+  "الكود",
+  "اسم الموظف",
+  "إجمالي التأخيرات",
+  "إجمالي الانصراف المبكر",
+  "إجمالي سهو البصمة",
+  "إجمالي الغياب",
+  "إجمالي الجزاءات",
+  "فترة الترك",
+  "بدل يوم الجمع",
+  "بدل أيام الإجازات الرسمية",
+  "إجمالي أيام البدل",
+] as const;
+
+export const summaryFormulaByRow = (rowNumber: number) => ({
+  C: `SUMIF(تفصيلي!$C:$C,$A${rowNumber},تفصيلي!$K:$K)`,
+  D: `SUMIF(تفصيلي!$C:$C,$A${rowNumber},تفصيلي!$L:$L)`,
+  E: `SUMIF(تفصيلي!$C:$C,$A${rowNumber},تفصيلي!$M:$M)`,
+  F: `SUMIF(تفصيلي!$C:$C,$A${rowNumber},تفصيلي!$N:$N)*2`,
+  G: `C${rowNumber}+D${rowNumber}+E${rowNumber}+F${rowNumber}`,
+  I: `COUNTIFS(تفصيلي!$C:$C,$A${rowNumber},تفصيلي!$I:$I,"جمعة",تفصيلي!$J:$J,"حضور")`,
+  J: `COUNTIFS(تفصيلي!$C:$C,$A${rowNumber},تفصيلي!$I:$I,"إجازة رسمية",تفصيلي!$J:$J,"حضور")`,
+  K: `I${rowNumber}+J${rowNumber}`,
+});
+
 export const buildAttendanceExportRows = ({
   records,
   employees,
@@ -190,8 +215,8 @@ export const buildAttendanceExportRows = ({
       dayNames[dayIndex],
       record.employeeCode,
       employeeMap.get(record.employeeCode) || "(غير موجود بالماستر)",
-      record.checkIn ? parseTimeToSeconds(toTimeText(record.checkIn)) / 86400 : 0,
-      record.checkOut ? parseTimeToSeconds(toTimeText(record.checkOut)) / 86400 : 0,
+      record.checkIn ? parseTimeToSeconds(toTimeText(record.checkIn)) / 86400 : "",
+      record.checkOut ? parseTimeToSeconds(toTimeText(record.checkOut)) / 86400 : "",
       typeof record.totalHours === "number" ? Number(record.totalHours.toFixed(2)) : 0,
       typeof record.overtimeHours === "number" ? Number(record.overtimeHours.toFixed(2)) : 0,
       dayType,
@@ -272,32 +297,7 @@ export const buildAttendanceExportRows = ({
     summaryByEmployee.set(record.employeeCode, summary);
   });
 
-  const summaryHeaders = [
-    "الكود",
-    "الاسم",
-    "عدد أيام العمل",
-    "عدد أيام الجمعة",
-    "عدد أيام حضور الجمعة",
-    "عدد أيام الإجازات الرسمية",
-    "عدد أيام الإجازات (المحددة)",
-    "عدد أيام الغياب",
-    "عدد أيام الغياب بعذر",
-    "عدد أيام الإجازة بالخصم",
-    "فترة الترك",
-    "إجمالي الغياب (بالخصم)",
-    "اجمالي الاجازات الرسمية",
-    "اجمالي حضور الاجازات الرسمية",
-    "بدل يوم الجمع",
-    "بدل الإجازات الرسمية",
-    "بدل مكتسب",
-    "بدل مستخدم",
-    "رصيد البدل",
-    "إجمالي التأخيرات",
-    "إجمالي الانصراف المبكر",
-    "إجمالي سهو البصمة",
-    "إجمالي الجزاءات",
-    "آخر يوم بصمة",
-  ];
+  const summaryHeaders = [...SUMMARY_HEADERS];
 
   const summaryRows: any[][] = [summaryHeaders];
   Array.from(summaryByEmployee.values()).forEach((summary) => {
@@ -307,34 +307,19 @@ export const buildAttendanceExportRows = ({
       summary.leaveDeductionDays +
       summary.terminationPeriodDays;
     const summaryPenaltiesTotal = summary.totalLate + summary.totalEarlyLeave + summary.totalMissingStamp + summaryAbsenceTotal;
-    const compEarned = summary.compDaysTotal;
-    const compUsed = summary.compDaysUsed;
-    const compBalance = compEarned - compUsed;
+    const compEarned = summary.compDaysFriday + summary.compDaysOfficial;
     summaryRows.push([
       summary.code,
       summary.name,
-      summary.workDays,
-      summary.fridays,
-      summary.fridayAttendance,
-      summary.officialLeaves,
-      summary.hrLeaves,
-      summary.absenceDays,
-      summary.excusedAbsenceDays,
-      summary.leaveDeductionDays,
-      summary.terminationPeriodDays,
-      summaryAbsenceTotal,
-      summary.officialHolidayDays,
-      summary.officialHolidayAttendance,
-      summary.compDaysFriday,
-      summary.compDaysOfficial,
-      compEarned,
-      compUsed,
-      compBalance,
       summary.totalLate,
       summary.totalEarlyLeave,
       summary.totalMissingStamp,
+      summaryAbsenceTotal,
       summaryPenaltiesTotal,
-      summary.lastPunchDate ? toExcelDateSerial(summary.lastPunchDate) : 0,
+      summary.terminationPeriodDays,
+      summary.compDaysFriday,
+      summary.compDaysOfficial,
+      compEarned,
     ]);
   });
 

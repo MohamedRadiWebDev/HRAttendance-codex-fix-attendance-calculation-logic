@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildAttendanceExportRows } from "@/exporters/attendanceExport";
+import { buildAttendanceExportRows, summaryFormulaByRow } from "@/exporters/attendanceExport";
 import type { AttendanceRecord, Employee } from "@shared/schema";
 
 const employee: Employee = {
@@ -135,32 +135,19 @@ describe("export workbook checks", () => {
     ]);
 
     expect(summaryHeaders[0]).toBe("الكود");
-    expect(summaryHeaders[1]).toBe("الاسم");
+    expect(summaryHeaders[1]).toBe("اسم الموظف");
     expect(summaryHeaders).toEqual([
       "الكود",
-      "الاسم",
-      "عدد أيام العمل",
-      "عدد أيام الجمعة",
-      "عدد أيام حضور الجمعة",
-      "عدد أيام الإجازات الرسمية",
-      "عدد أيام الإجازات (المحددة)",
-      "عدد أيام الغياب",
-      "عدد أيام الغياب بعذر",
-      "عدد أيام الإجازة بالخصم",
-      "فترة الترك",
-      "إجمالي الغياب (بالخصم)",
-      "اجمالي الاجازات الرسمية",
-      "اجمالي حضور الاجازات الرسمية",
-      "بدل يوم الجمع",
-      "بدل الإجازات الرسمية",
-      "بدل مكتسب",
-      "بدل مستخدم",
-      "رصيد البدل",
+      "اسم الموظف",
       "إجمالي التأخيرات",
       "إجمالي الانصراف المبكر",
       "إجمالي سهو البصمة",
+      "إجمالي الغياب",
       "إجمالي الجزاءات",
-      "آخر يوم بصمة",
+      "فترة الترك",
+      "بدل يوم الجمع",
+      "بدل أيام الإجازات الرسمية",
+      "إجمالي أيام البدل",
     ]);
     expect(summaryRows.length).toBeGreaterThan(1);
     expect(detailRows.length).toBeGreaterThan(1);
@@ -172,14 +159,20 @@ describe("export workbook checks", () => {
     const summaryRow = summaryRows[1];
     expect(summaryRow[0]).toBe("EMP1");
     expect(String(summaryRow[1]).trim().length).toBeGreaterThan(0);
-    expect(typeof summaryRow[23]).toBe("number");
-    expect(summaryRow[23]).toBeGreaterThan(0);
+    expect(summaryRow[2]).toBe(0);
+    expect(summaryRow[3]).toBe(0);
+    expect(summaryRow[4]).toBe(0);
 
-    // Absence weighting in summary: absenceDays * 2 + excusedAbsenceDays
-    expect(summaryRow[7]).toBe(1); // absenceDays
-    expect(summaryRow[11]).toBe(2); // weighted absence total
-    expect(summaryRow[15]).toBe(1); // official holiday comp days
-    expect(summaryRow[16]).toBe(1); // earned comp days
+    // Absence weighting in summary: absenceDays * 2 + excused + leave deduction + termination
+    expect(summaryRow[5]).toBe(2);
+    expect(summaryRow[9]).toBe(1);
+    expect(summaryRow[10]).toBe(1);
+
+    const formulas = summaryFormulaByRow(2);
+    expect(formulas.C).toBe('SUMIF(تفصيلي!$C:$C,$A2,تفصيلي!$K:$K)');
+    expect(formulas.F).toBe('SUMIF(تفصيلي!$C:$C,$A2,تفصيلي!$N:$N)*2');
+    expect(formulas.I).toBe('COUNTIFS(تفصيلي!$C:$C,$A2,تفصيلي!$I:$I,"جمعة",تفصيلي!$J:$J,"حضور")');
+    expect(formulas.J).toBe('COUNTIFS(تفصيلي!$C:$C,$A2,تفصيلي!$I:$I,"إجازة رسمية",تفصيلي!$J:$J,"حضور")');
 
     const holidayDetailRow = detailRows.find((row) => row[0] !== "التاريخ" && row[8] === "إجازة رسمية");
     expect(holidayDetailRow).toBeTruthy();

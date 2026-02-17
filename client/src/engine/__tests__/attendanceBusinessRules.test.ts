@@ -57,8 +57,7 @@ describe("attendance business rules", () => {
     expect(records[0].penalties?.length).toBeGreaterThan(0);
 
     const { summaryRows } = buildAttendanceExportRows({ records, employees: [baseEmployee] });
-    expect(summaryRows[1][7]).toBe(1); // absence without excuse days
-    expect(summaryRows[1][11]).toBe(2); // weighted absence total
+    expect(summaryRows[1][5]).toBe(2); // weighted absence total
   });
 
   it("marks غياب بعذر with weight 1 and no penalties", () => {
@@ -77,9 +76,7 @@ describe("attendance business rules", () => {
     expect(records[0].penalties?.length).toBe(0);
 
     const { summaryRows } = buildAttendanceExportRows({ records, employees: [baseEmployee] });
-    expect(summaryRows[1][7]).toBe(0); // absence without excuse
-    expect(summaryRows[1][8]).toBe(1); // absence with excuse
-    expect(summaryRows[1][11]).toBe(1); // weighted absence total
+    expect(summaryRows[1][5]).toBe(1); // weighted absence total with excuse
   });
 
   it("marks إجازة بالخصم with deduction and no penalties", () => {

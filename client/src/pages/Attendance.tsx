@@ -18,7 +18,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import * as XLSX from 'xlsx';
-import { buildAttendanceExportRows } from "@/exporters/attendanceExport";
+import { buildAttendanceExportRows, summaryFormulaByRow } from "@/exporters/attendanceExport";
 import { useAttendanceStore } from "@/store/attendanceStore";
 import { useEffectsStore } from "@/store/effectsStore";
 import { resolveShiftForDate, timeStringToSeconds } from "@/engine/attendanceEngine";
@@ -392,18 +392,33 @@ export default function Attendance() {
           fill: { patternType: "solid", fgColor: { rgb: fill } },
         };
       }
-      const dateCell = summarySheet[XLSX.utils.encode_cell({ r: rowIndex, c: summaryHeaders.length - 1 })];
-      if (dateCell && Number(dateCell.v) > 0) {
-        dateCell.t = "n";
-        dateCell.z = "yyyy-mm-dd";
-      }
-      for (let colIndex = 2; colIndex < summaryHeaders.length - 1; colIndex += 1) {
+      for (let colIndex = 2; colIndex < summaryHeaders.length; colIndex += 1) {
         const cell = summarySheet[XLSX.utils.encode_cell({ r: rowIndex, c: colIndex })];
         if (cell) {
           cell.t = "n";
           cell.z = "0.00";
         }
       }
+
+      const rowNumber = rowIndex + 1;
+      const formulas = summaryFormulaByRow(rowNumber);
+      const formulaCols: Array<[string, string]> = [
+        ["C", formulas.C],
+        ["D", formulas.D],
+        ["E", formulas.E],
+        ["F", formulas.F],
+        ["G", formulas.G],
+        ["I", formulas.I],
+        ["J", formulas.J],
+        ["K", formulas.K],
+      ];
+      formulaCols.forEach(([col, formula]) => {
+        const addr = `${col}${rowNumber}`;
+        if (!summarySheet[addr]) summarySheet[addr] = { t: "n", v: 0 };
+        summarySheet[addr].f = formula;
+        summarySheet[addr].t = "n";
+        summarySheet[addr].z = "0.00";
+      });
     }
 
 
