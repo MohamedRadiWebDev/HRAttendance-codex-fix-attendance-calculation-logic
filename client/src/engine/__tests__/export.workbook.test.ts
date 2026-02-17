@@ -54,6 +54,7 @@ describe("export workbook checks", () => {
         compDaysFriday: 0,
         compDaysOfficial: 0,
         compDaysTotal: 0,
+        compDaysUsed: 0,
       },
       {
         id: 2,
@@ -79,6 +80,7 @@ describe("export workbook checks", () => {
         compDaysFriday: 0,
         compDaysOfficial: 0,
         compDaysTotal: 0,
+        compDaysUsed: 0,
       },
     ];
 

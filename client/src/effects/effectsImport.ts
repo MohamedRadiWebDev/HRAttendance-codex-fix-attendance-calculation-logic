@@ -6,7 +6,18 @@ import { parseTimeCell } from "@/effects/timeParser";
 import type { Employee, BiometricPunch, SpecialRule } from "@shared/schema";
 import type { Effect } from "@/store/effectsStore";
 
-export const EFFECT_EXPORT_HEADERS = ["الكود", "الاسم", "التاريخ", "من", "الي", "النوع", "الحالة", "ملاحظة"] as const;
+export const EFFECT_EXPORT_HEADERS = ["الكود", "الاسم", "التاريخ", "من", "إلى", "النوع", "ملاحظة"] as const;
+export const EFFECT_TYPE_OPTIONS = [
+  "مأمورية",
+  "إذن صباحي",
+  "إذن مسائي",
+  "إذن عام",
+  "إجازة نص يوم",
+  "إجازة من الرصيد",
+  "إجازة بالخصم",
+  "إجازة بدل",
+  "غياب بعذر",
+] as const;
 
 export type ParsedEffectValidation = {
   rowIndex: number;
@@ -58,7 +69,7 @@ const resolveHeaderIndexes = (headers: unknown[]) => {
     note: findIndex(HEADER_ALIASES.note),
   };
 
-  const requiredMissing = ["code", "name", "date", "from", "to", "type"].filter((k) => (indexes as any)[k] < 0);
+  const requiredMissing = ["code", "name", "date", "type"].filter((k) => (indexes as any)[k] < 0);
   return { indexes, requiredMissing };
 };
 
@@ -123,7 +134,7 @@ export const parseEffectsSheet = async ({
 
   const { indexes, requiredMissing } = resolveHeaderIndexes(headerRow);
   if (requiredMissing.length > 0) {
-    throw new Error("رأس الملف غير مطابق. الأعمدة المطلوبة: الكود | الاسم | التاريخ | من | الي | النوع");
+    throw new Error("رأس الملف غير مطابق. الأعمدة المطلوبة: الكود | الاسم | التاريخ | من | إلى | النوع");
   }
 
   const employeeMap = new Map((employees || []).map((e) => [normalizeEmployeeCode(e.code), e]));
@@ -136,13 +147,12 @@ export const parseEffectsSheet = async ({
     const employeeName = String(row[indexes.name] || "").trim();
     const date = parseDateCell(row[indexes.date]);
 
-    const fromParsed = parseTimeCell(row[indexes.from]);
-    const toParsed = parseTimeCell(row[indexes.to]);
+    const fromParsed = indexes.from >= 0 ? parseTimeCell(row[indexes.from]) : { ok: false as const, reason: "empty" };
+    const toParsed = indexes.to >= 0 ? parseTimeCell(row[indexes.to]) : { ok: false as const, reason: "empty" };
     let fromTime = fromParsed.ok ? fromParsed.timeHHmm : "";
     let toTime = toParsed.ok ? toParsed.timeHHmm : "";
 
     const type = normalizeEffectType(row[indexes.type]);
-    const status = indexes.status >= 0 ? String(row[indexes.status] || "").trim() : "";
     const note = indexes.note >= 0 ? String(row[indexes.note] || "").trim() : "";
 
     if (!employeeCode) return invalidRows.push({ rowIndex, valid: false, reason: "الكود مطلوب" });
@@ -186,7 +196,7 @@ export const parseEffectsSheet = async ({
       fromTime,
       toTime,
       type,
-      status,
+      status: "",
       note,
       source: "excel",
     });
@@ -198,15 +208,24 @@ export const parseEffectsSheet = async ({
 export const buildEffectsTemplateWorkbook = () => {
   const data = [
     [...EFFECT_EXPORT_HEADERS],
-    ["648", "أحمد علي", "2025-01-05", "", "", "إذن صباحي", "موافق", "سماح أول ساعتين"],
-    ["648", "أحمد علي", "2025-01-06", "", "", "إذن مسائي", "موافق", "سماح آخر ساعتين"],
-    ["701", "منى سالم", "2025-01-07", "", "", "إجازة نصف يوم", "موافق", "نصف يوم"],
-    ["701", "منى سالم", "2025-01-08", "09:00", "13:00", "مأمورية", "موافق", "مأمورية (نص)"],
-    ["702", "عمرو محمد", "2025-01-09", "", "", "غياب بعذر", "معتمد", "مستند طبي"],
+    ["648", "أحمد علي", "2025-01-05", "", "", "إذن صباحي", "سماح أول ساعتين"],
+    ["648", "أحمد علي", "2025-01-06", "", "", "إذن مسائي", "سماح آخر ساعتين"],
+    ["701", "منى سالم", "2025-01-07", "", "", "إجازة نص يوم", "نصف يوم"],
+    ["701", "منى سالم", "2025-01-08", "09:00", "13:00", "مأمورية", "مأمورية (نص)"],
+    ["703", "دينا شريف", "2025-01-08", "", "", "إجازة بدل", "استخدام يوم بدل"],
+    ["702", "عمرو محمد", "2025-01-09", "", "", "غياب بعذر", "مستند طبي"],
   ];
   const ws = XLSX.utils.aoa_to_sheet(data);
   ws.D7 = { t: "n", v: 0.375, z: "hh:mm" } as any;
   ws.E7 = { t: "n", v: 13 / 24, z: "hh:mm" } as any;
+  (ws as any)["!dataValidation"] = [
+    {
+      sqref: "F2:F200",
+      type: "list",
+      allowBlank: false,
+      formula1: `"${EFFECT_TYPE_OPTIONS.join(",")}"`,
+    },
+  ];
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "المؤثرات");
   return wb;

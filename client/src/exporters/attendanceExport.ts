@@ -84,6 +84,7 @@ export const buildAttendanceExportRows = ({
     compDaysFriday: number;
     compDaysOfficial: number;
     compDaysTotal: number;
+    compDaysUsed: number;
     lastPunchDate: string;
     totalLate: number;
     totalEarlyLeave: number;
@@ -115,6 +116,8 @@ export const buildAttendanceExportRows = ({
       ? "إجازة بالخصم"
       : excusedAbsenceDays > 0
       ? "غياب بعذر"
+      : record.status === "Leave"
+      ? "إجازة"
       : isFriday
       ? "جمعة"
       : isOfficialHoliday
@@ -140,7 +143,7 @@ export const buildAttendanceExportRows = ({
         ? "تأخير"
         : record.status === "Absent"
           ? "غياب"
-          : isCompDay
+          : record.status === "Leave" || isCompDay
             ? "إجازة"
             : "حضور";
 
@@ -231,6 +234,7 @@ export const buildAttendanceExportRows = ({
       compDaysFriday: 0,
       compDaysOfficial: 0,
       compDaysTotal: 0,
+      compDaysUsed: 0,
       lastPunchDate: "",
       totalLate: 0,
       totalEarlyLeave: 0,
@@ -254,6 +258,7 @@ export const buildAttendanceExportRows = ({
     summary.compDaysFriday += Number(record.compDaysFriday || 0);
     summary.compDaysOfficial += Number(record.compDaysOfficial || 0);
     summary.compDaysTotal += Number(record.compDaysTotal || 0);
+    summary.compDaysUsed += Number((record as any).compDaysUsed || 0);
     if (record.checkIn || record.checkOut) {
       const candidate = record.checkOut || record.checkIn;
       if (candidate) {
@@ -294,7 +299,9 @@ export const buildAttendanceExportRows = ({
     "اجمالي حضور الاجازات الرسمية",
     "بدل يوم الجمع",
     "بدل الإجازات الرسمية",
-    "إجمالي أيام البدل",
+    "بدل مكتسب",
+    "بدل مستخدم",
+    "رصيد البدل",
     "إجمالي التأخيرات",
     "إجمالي الانصراف المبكر",
     "إجمالي سهو البصمة",
@@ -306,6 +313,9 @@ export const buildAttendanceExportRows = ({
   Array.from(summaryByEmployee.values()).forEach((summary) => {
     const summaryAbsenceTotal = summary.absenceDays * 2 + summary.excusedAbsenceDays;
     const summaryPenaltiesTotal = summary.totalLate + summary.totalEarlyLeave + summary.totalMissingStamp + summaryAbsenceTotal + summary.leaveDeductionDays;
+    const compEarned = summary.compDaysTotal;
+    const compUsed = summary.compDaysUsed;
+    const compBalance = compEarned - compUsed;
     summaryRows.push([
       summary.code,
       summary.name,
@@ -323,7 +333,9 @@ export const buildAttendanceExportRows = ({
       summary.officialHolidayAttendance,
       summary.compDaysFriday,
       summary.compDaysOfficial,
-      summary.compDaysTotal,
+      compEarned,
+      compUsed,
+      compBalance,
       summary.totalLate,
       summary.totalEarlyLeave,
       summary.totalMissingStamp,

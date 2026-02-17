@@ -98,7 +98,6 @@ export default function Effects() {
       من: row.fromTime || "",
       إلى: row.toTime || "",
       النوع: row.type,
-      الحالة: row.status || "",
       ملاحظة: row.note || "",
     }));
     const ws = XLSX.utils.json_to_sheet(data, { header: EFFECT_EXPORT_HEADERS as unknown as string[] });
@@ -132,7 +131,7 @@ export default function Effects() {
               <div className="flex flex-wrap gap-3 items-center">
                 <Input type="file" accept=".xlsx,.xls" className="max-w-sm" onChange={(e) => e.target.files?.[0] && handleImport(e.target.files[0])} />
                 <Button variant="outline" onClick={exportFiltered}>تصدير القائمة</Button>
-                <Button variant="outline" onClick={() => XLSX.writeFile(buildEffectsTemplateWorkbook(), "effects-template.xlsx")}>تحميل قالب جاهز</Button>
+                <Button variant="outline" onClick={() => XLSX.writeFile(buildEffectsTemplateWorkbook(), "تمبليت_المؤثرات_الشامل.xlsx")}>تحميل قالب جاهز</Button>
                 <Input type="date" className="w-40" value={bulkDeleteStart} onChange={(e) => setBulkDeleteStart(e.target.value)} />
                 <Input type="date" className="w-40" value={bulkDeleteEnd} onChange={(e) => setBulkDeleteEnd(e.target.value)} />
                 <Button variant="destructive" onClick={() => {

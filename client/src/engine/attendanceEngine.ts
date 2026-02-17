@@ -11,7 +11,7 @@ import type {
   SpecialRule,
 } from "@shared/schema";
 
-export const ADJUSTMENT_TYPES = ["اذن صباحي", "اذن مسائي", "إجازة نص يوم", "مأمورية", "إجازة بالخصم", "غياب بعذر", "إجازة من الرصيد"] as const;
+export const ADJUSTMENT_TYPES = ["اذن صباحي", "اذن مسائي", "إجازة نص يوم", "مأمورية", "إجازة بالخصم", "غياب بعذر", "إجازة من الرصيد", "إجازة بدل"] as const;
 
 export type AdjustmentType = (typeof ADJUSTMENT_TYPES)[number];
 
@@ -372,6 +372,11 @@ export const applyEffectsToDailyRecord = ({
       return;
     }
 
+    if (type === "اجازة بدل") {
+      mergedAdjustments.push(buildSyntheticAdjustment(employeeCode, dateStr, "إجازة بدل", "00:00:00", "00:00:00", effect.note));
+      return;
+    }
+
     notes.push(`Needs Mapping: ${effect.type}`);
   });
 
@@ -653,6 +658,7 @@ export const processAttendanceRecords = ({
       const excusedAbsenceAdjustments = dayAdjustments.filter((adj) => adj.type === "غياب بعذر");
       const hasLeaveDeduction = leaveDeductionAdjustments.length > 0;
       const hasLeaveFromBalance = dayAdjustments.some((adj) => adj.type === "إجازة من الرصيد");
+      const hasCompDayUsed = dayAdjustments.some((adj) => adj.type === "إجازة بدل");
       const hasExcusedAbsence = excusedAbsenceAdjustments.length > 0;
 
       const consumedPunches = consumedPunchesByDate.get(dateStr);
@@ -701,6 +707,7 @@ export const processAttendanceRecords = ({
           compDaysFriday: 0,
           compDaysOfficial: 0,
           compDaysTotal: 0,
+          compDaysUsed: 0,
         } as AttendanceRecord);
         continue;
       }
@@ -742,6 +749,7 @@ export const processAttendanceRecords = ({
           compDaysFriday: 0,
           compDaysOfficial,
           compDaysTotal: compDaysOfficial,
+          compDaysUsed: hasCompDayUsed ? 1 : 0,
         } as AttendanceRecord);
         continue;
       }
@@ -798,6 +806,7 @@ export const processAttendanceRecords = ({
           compDaysFriday,
           compDaysOfficial: 0,
           compDaysTotal: compDaysFriday,
+          compDaysUsed: hasCompDayUsed ? 1 : 0,
         } as AttendanceRecord);
         continue;
       }
@@ -854,7 +863,7 @@ export const processAttendanceRecords = ({
         const excusedByHalfDayNoPunch = halfDayExcused && !checkIn && !checkOut;
         const excusedByMission = hasMission;
         const excusedDay = excusedByHalfDayNoPunch || excusedByMission;
-        const isExcusedForPenalties = excusedDay || suppressPenalties || hasOvernightStay || hasLeaveDeduction || hasLeaveFromBalance || hasExcusedAbsence;
+        const isExcusedForPenalties = excusedDay || suppressPenalties || hasOvernightStay || hasLeaveDeduction || hasLeaveFromBalance || hasCompDayUsed || hasExcusedAbsence;
         let latePenaltyValue = 0;
         let lateMinutes = 0;
 
@@ -880,7 +889,7 @@ export const processAttendanceRecords = ({
         if (hasLeaveDeduction) {
           status = "Leave Deduction";
         }
-        if (hasLeaveFromBalance) {
+        if (hasLeaveFromBalance || hasCompDayUsed) {
           status = "Leave";
         }
         if (hasExcusedAbsence && !checkIn && !checkOut) {
@@ -978,11 +987,12 @@ export const processAttendanceRecords = ({
           compDaysFriday,
           compDaysOfficial,
           compDaysTotal: compDaysFriday + compDaysOfficial,
+          compDaysUsed: hasCompDayUsed ? 1 : 0,
         } as AttendanceRecord);
       } else {
         const extraNotes = extraNotesByKey.get(dateStr) || [];
-        const status = hasExcusedAbsence ? "Excused Absence" : hasLeaveDeduction ? "Leave Deduction" : hasLeaveFromBalance ? "Leave" : "Absent";
-        const penalties = hasExcusedAbsence || hasLeaveDeduction || hasLeaveFromBalance ? [] : [{ type: "غياب", value: 1 }];
+        const status = hasExcusedAbsence ? "Excused Absence" : hasLeaveDeduction ? "Leave Deduction" : hasLeaveFromBalance || hasCompDayUsed ? "Leave" : "Absent";
+        const penalties = hasExcusedAbsence || hasLeaveDeduction || hasLeaveFromBalance || hasCompDayUsed ? [] : [{ type: "غياب", value: 1 }];
         records.push({
           id: recordId++,
           employeeCode: employee.code,
@@ -1012,6 +1022,7 @@ export const processAttendanceRecords = ({
           compDaysFriday: 0,
           compDaysOfficial: 0,
           compDaysTotal: 0,
+          compDaysUsed: hasCompDayUsed ? 1 : 0,
         } as AttendanceRecord);
       }
     }
