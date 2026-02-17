@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState } from "react";
+import { Link } from "wouter";
 import * as XLSX from "xlsx";
 import { Sidebar } from "@/components/Sidebar";
 import { Header } from "@/components/Header";
@@ -282,6 +283,9 @@ export default function Leaves() {
         <Header title="إدارة الإجازات" />
         <main className="flex-1 overflow-y-auto p-8 space-y-6">
           <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as "official" | "other")}>
+            <div className="flex justify-end">
+              <Link href="/effects"><Button variant="outline">إدارة المؤثرات</Button></Link>
+            </div>
             <TabsList className="grid w-full max-w-md grid-cols-2">
               <TabsTrigger value="official">الإجازات الرسمية</TabsTrigger>
               <TabsTrigger value="other">الإجازات الأخرى</TabsTrigger>
