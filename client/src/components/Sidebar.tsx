@@ -9,7 +9,9 @@ import {
   Upload, 
   Briefcase,
   ClipboardList,
-  Archive
+  Archive,
+  Sparkles,
+  Bug
 } from "lucide-react";
 
 const navigation = [
@@ -19,10 +21,11 @@ const navigation = [
   { name: 'خريطة الحضور', href: '/attendance-heatmap', icon: Grid2x2 },
   { name: 'التسويات والإجازات', href: '/adjustments', icon: Briefcase },
   { name: 'إدارة الإجازات', href: '/leaves', icon: ClipboardList },
-  { name: 'استيراد المؤثرات', href: '/effects-import', icon: Upload },
+  { name: 'إدارة المؤثرات', href: '/effects', icon: Sparkles },
   { name: 'القواعد والورديات', href: '/rules', icon: Settings },
   { name: 'استيراد بيانات', href: '/import', icon: Upload },
   { name: 'النسخ الاحتياطي', href: '/backup', icon: Archive },
+  { name: 'التشخيص', href: '/diagnostics', icon: Bug },
 ];
 
 export function Sidebar() {
