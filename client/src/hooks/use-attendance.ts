@@ -1,5 +1,6 @@
 import { useCallback, useState } from "react";
 import { format } from "date-fns";
+import { normalizeEmployeeCode } from "@shared/employee-code";
 import { useAttendanceStore, type AttendanceStoreState } from "@/store/attendanceStore";
 import type { AttendanceRecord } from "@shared/schema";
 
@@ -52,15 +53,15 @@ const filterAttendanceRecords = (
   employeeCode?: string
 ) => {
   const codes = employeeCode?.includes(",")
-    ? employeeCode.split(",").map((code) => code.trim()).filter(Boolean)
+    ? employeeCode.split(",").map((code) => normalizeEmployeeCode(code)).filter(Boolean)
     : employeeCode
-      ? [employeeCode.trim()]
+      ? [normalizeEmployeeCode(employeeCode)]
       : [];
 
   return records.filter((record) => {
     if (startDate && record.date < startDate) return false;
     if (endDate && record.date > endDate) return false;
-    if (codes.length > 0 && !codes.includes(record.employeeCode)) return false;
+    if (codes.length > 0 && !codes.includes(normalizeEmployeeCode(record.employeeCode))) return false;
     return true;
   });
 };
@@ -105,7 +106,7 @@ export function useAttendanceRecords(
 
 export function useProcessAttendance() {
   const processAttendance = useAttendanceStore((state: AttendanceStoreState) => state.processAttendance);
-  return useStoreMutation<{ startDate: string; endDate: string; timezoneOffsetMinutes?: number }, { message: string; processedCount: number }>(
+  return useStoreMutation<{ startDate: string; endDate: string; timezoneOffsetMinutes?: number; employeeCodes?: string[] }, { message: string; processedCount: number }>(
     processAttendance
   );
 }

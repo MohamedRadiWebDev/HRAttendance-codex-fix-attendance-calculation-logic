@@ -9,6 +9,7 @@ import { useImportEmployees, useImportPunches } from "@/hooks/use-employees";
 import { useProcessAttendance } from "@/hooks/use-attendance";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { format, parse, parseISO, isValid } from "date-fns";
+import { normalizeEmployeeCode } from "@shared/employee-code";
 import {
   buildEmployeesTemplate,
   buildLeavesTemplate,
@@ -16,6 +17,80 @@ import {
   buildPunchesTemplate,
   buildRulesTemplate,
 } from "@/exporters/templatesExporter";
+
+const normalizeImportHeader = (key: string) =>
+  key
+    .replace(/[\uFEFF\u200E\u200F]/g, "")
+    .replace(/["'`]/g, "")
+    .replace(/[\r\n\t]+/g, " ")
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase()
+    .replace(/أ|إ|آ/g, "ا")
+    .replace(/ة/g, "ه");
+
+const buildNormalizedRow = (row: Record<string, unknown>) => {
+  const normalized: Record<string, unknown> = {};
+  Object.keys(row).forEach((key) => {
+    normalized[normalizeImportHeader(key)] = row[key];
+  });
+  return normalized;
+};
+
+
+
+const toArabicDigitsNormalized = (value: string) => value.replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d)));
+
+const normalizeExcelLocalDate = (value: unknown): string => {
+  if (value === null || value === undefined || String(value).trim() === "") return "";
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const base = new Date(Date.UTC(1899, 11, 30));
+    const date = new Date(base.getTime() + value * 24 * 60 * 60 * 1000);
+    if (!isValid(date)) return "";
+    const y = date.getUTCFullYear();
+    const m = String(date.getUTCMonth() + 1).padStart(2, "0");
+    const d = String(date.getUTCDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+  }
+  if (value instanceof Date) {
+    if (!isValid(value)) return "";
+    const y = value.getFullYear();
+    const m = String(value.getMonth() + 1).padStart(2, "0");
+    const d = String(value.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+  }
+  const raw = toArabicDigitsNormalized(String(value).trim()).replace(/\./g, "/");
+  const iso = raw.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
+  if (iso) {
+    const [, y, m, d] = iso;
+    return `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
+  }
+  const dmy = raw.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/);
+  if (dmy) {
+    const [, d, m, y] = dmy;
+    return `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
+  }
+  return "";
+};
+const getImportCell = (row: Record<string, unknown>, aliases: string[]) => {
+  for (const alias of aliases) {
+    const direct = row[alias];
+    if (direct !== undefined && direct !== null && String(direct).trim() !== "") {
+      return direct;
+    }
+  }
+
+  const normalizedRow = buildNormalizedRow(row);
+  for (const alias of aliases) {
+    const value = normalizedRow[normalizeImportHeader(alias)];
+    if (value !== undefined && value !== null && String(value).trim() !== "") {
+      return value;
+    }
+  }
+
+  return "";
+};
 
 export default function Import() {
   const { toast } = useToast();
@@ -75,7 +150,6 @@ export default function Import() {
         const ws = wb.Sheets[wsname];
         const data = XLSX.utils.sheet_to_json(ws);
         
-        console.log("Excel Preview Data:", data[0]); // Debug first row
         
         if (data.length === 0) {
           toast({ title: "تنبيه", description: "الملف فارغ", variant: "destructive" });
@@ -98,26 +172,26 @@ export default function Import() {
     try {
       if (activeTab === "employees") {
         const mapped = previewData.map((row: any) => ({
-          code: String(row['كود'] || row['Code'] || row['ID'] || ""),
-          nameAr: String(row['الاسم'] || row['Name'] || ""),
-          sector: String(row['القطاع'] || row['Sector'] || ""),
-          department: String(row['الادارة'] || row['Department'] || ""),
-          section: String(row['القسم'] || row['Section'] || ""),
-          jobTitle: String(row['الوظيفة'] || row['Job Title'] || ""),
-          branch: String(row['الفرع'] || row['Branch'] || ""),
-          governorate: String(row['المحافظة'] || row['Governorate'] || ""),
-          hireDate: String(row['تاريخ التعيين'] || row['Hire Date'] || ""),
-          terminationDate: String(row['تاريخ ترك العمل'] || row['Termination Date'] || ""),
-          terminationReason: String(row['سبب ترك العمل'] || row['Termination Reason'] || ""),
-          serviceDuration: String(row['بيان مدة الخدمة'] || row['Service Duration'] || ""),
-          directManager: String(row['اسم المدير المباشر'] || row['Direct Manager'] || ""),
-          deptManager: String(row['مدير الادارة'] || row['Dept Manager'] || ""),
-          nationalId: String(row['الرقم القومى'] || row['National ID'] || ""),
-          birthDate: String(row['تاريخ الميلاد'] || row['Birth Date'] || ""),
-          address: String(row['العنوان'] || row['Address'] || ""),
-          birthPlace: String(row['محل الميلاد'] || row['Birth Place'] || ""),
-          personalPhone: String(row['التليفون الشخصى'] || row['Personal Phone'] || ""),
-          emergencyPhone: String(row['تليفون طوارئ'] || row['Emergency Phone'] || ""),
+          code: normalizeEmployeeCode(getImportCell(row, ['كود', 'الكود', 'Code', 'ID'])),
+          nameAr: String(getImportCell(row, ['الاسم', 'Name'])),
+          sector: String(getImportCell(row, ['القطاع', 'Sector'])),
+          department: String(getImportCell(row, ['الادارة', 'الإدارة', 'Department'])),
+          section: String(getImportCell(row, ['القسم', 'Section', 'section', 'department', 'Department'])).trim() || 'غير مسجل',
+          jobTitle: String(getImportCell(row, ['الوظيفة', 'Job Title'])),
+          branch: String(getImportCell(row, ['الفرع', 'Branch'])),
+          governorate: String(getImportCell(row, ['المحافظة', 'Governorate'])),
+          hireDate: normalizeExcelLocalDate(getImportCell(row, ['تاريخ التعيين', 'Hire Date', 'hire_date', 'hireDate', 'Start Date'])),
+          terminationDate: String(getImportCell(row, ['تاريخ ترك العمل', 'Termination Date'])),
+          terminationReason: String(getImportCell(row, ['سبب ترك العمل', 'Termination Reason'])),
+          serviceDuration: String(getImportCell(row, ['بيان مدة الخدمة', 'Service Duration'])),
+          directManager: String(getImportCell(row, ['اسم المدير المباشر', 'Direct Manager'])),
+          deptManager: String(getImportCell(row, ['مدير الادارة', 'مدير الإدارة', 'Dept Manager'])),
+          nationalId: String(getImportCell(row, ['الرقم القومى', 'الرقم القومي', 'National ID'])),
+          birthDate: String(getImportCell(row, ['تاريخ الميلاد', 'Birth Date'])),
+          address: String(getImportCell(row, ['العنوان', 'Address'])),
+          birthPlace: String(getImportCell(row, ['محل الميلاد', 'Birth Place'])),
+          personalPhone: String(getImportCell(row, ['التليفون الشخصى', 'التليفون الشخصي', 'Personal Phone'])),
+          emergencyPhone: String(getImportCell(row, ['تليفون طوارئ', 'Emergency Phone'])),
           shiftStart: "09:00",
         })).filter(emp => emp.code && emp.nameAr);
 
@@ -133,11 +207,11 @@ export default function Import() {
           });
 
           // Try to find employee code
-          const employeeCode = String(
+          const employeeCode = normalizeEmployeeCode(
             row['كود'] || row['ID'] || row['Code'] || row['الكود'] || 
             normalizedRow['كود'] || normalizedRow['الكود'] || 
             row['id'] || row['Employee ID'] || ""
-          ).trim();
+          );
           
           // Try to find date/time
           const rawDate = 
@@ -151,7 +225,7 @@ export default function Import() {
           
           return {
             employeeCode,
-            punchDatetime: punchDatetime ? format(punchDatetime, "yyyy-MM-dd'T'HH:mm:ssXXX") : "",
+            punchDatetime: punchDatetime ? format(punchDatetime, "yyyy-MM-dd'T'HH:mm:ss") : "",
           };
         }).filter(p => p.employeeCode && p.punchDatetime);
 
@@ -175,6 +249,7 @@ export default function Import() {
           await processAttendance.mutateAsync({
             startDate: startRange,
             endDate: endRange,
+            employeeCodes: Array.from(new Set(mapped.map((row) => row.employeeCode))),
           });
         }
       }
