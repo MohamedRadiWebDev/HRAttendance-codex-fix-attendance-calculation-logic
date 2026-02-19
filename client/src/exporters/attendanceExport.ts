@@ -1,6 +1,7 @@
 import { format } from "date-fns";
 import type { AttendanceRecord, Employee } from "@shared/schema";
 import { parseTimeToSeconds } from "@/lib/datetime";
+import { normalizeEmployeeCode } from "@shared/employee-code";
 
 const dayNames = ["أحد", "اثنين", "ثلاثاء", "أربعاء", "خميس", "جمعة", "سبت"];
 
@@ -81,10 +82,10 @@ export const buildAttendanceExportRows = ({
   records: AttendanceRecord[];
   employees: Employee[];
 }): AttendanceExportResult => {
-  const employeeMap = new Map(employees.map((emp) => [emp.code, emp.nameAr]));
-  const employeeMetaMap = new Map(employees.map((emp) => [emp.code, emp]));
+  const employeeMap = new Map(employees.map((emp) => [normalizeEmployeeCode(emp.code), emp.nameAr]));
+  const employeeMetaMap = new Map(employees.map((emp) => [normalizeEmployeeCode(emp.code), emp]));
   const getHireDateSerialByCode = (code: string) => {
-    const employeeMeta = employeeMetaMap.get(code);
+    const employeeMeta = employeeMetaMap.get(normalizeEmployeeCode(code));
     const hireDateText = normalizeHireDate(
       (employeeMeta as any)?.hireDate ?? (employeeMeta as any)?.hire_date ?? (employeeMeta as any)?.["تاريخ التعيين"]
     );
@@ -243,7 +244,7 @@ export const buildAttendanceExportRows = ({
       excelDateSerial,
       dayNames[dayIndex],
       record.employeeCode,
-      employeeMap.get(record.employeeCode) || "(غير موجود بالماستر)",
+      employeeMap.get(normalizeEmployeeCode(record.employeeCode)) || "(غير موجود بالماستر)",
       hireDateSerial,
       record.checkIn ? parseTimeToSeconds(toTimeText(record.checkIn)) / 86400 : "",
       record.checkOut ? parseTimeToSeconds(toTimeText(record.checkOut)) / 86400 : "",
@@ -261,9 +262,10 @@ export const buildAttendanceExportRows = ({
 
     detailRows.push(detailRow);
 
-    const summary = summaryByEmployee.get(record.employeeCode) || {
+    const normalizedEmployeeCode = normalizeEmployeeCode(record.employeeCode);
+    const summary = summaryByEmployee.get(normalizedEmployeeCode) || {
       code: record.employeeCode,
-      name: employeeMap.get(record.employeeCode) || "(غير موجود بالماستر)",
+      name: employeeMap.get(normalizedEmployeeCode) || "(غير موجود بالماستر)",
       workDays: 0,
       fridays: 0,
       fridayAttendance: 0,
@@ -324,7 +326,7 @@ export const buildAttendanceExportRows = ({
       });
     }
 
-    summaryByEmployee.set(record.employeeCode, summary);
+    summaryByEmployee.set(normalizedEmployeeCode, summary);
   });
 
   const summaryHeaders = [...SUMMARY_HEADERS];

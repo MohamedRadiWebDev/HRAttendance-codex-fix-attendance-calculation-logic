@@ -12,7 +12,7 @@ const employee: Employee = {
   jobTitle: "",
   branch: "",
   governorate: "",
-  hireDate: "",
+  hireDate: "2020-01-15",
   terminationDate: "",
   terminationReason: "",
   serviceDuration: "",
@@ -84,7 +84,7 @@ describe("export workbook checks", () => {
       },
       {
         id: 3,
-        employeeCode: "EMP1",
+        employeeCode: " EMP1 ",
         date: "2024-06-05",
         checkIn: new Date("2024-06-05T09:00:00"),
         checkOut: new Date("2024-06-05T17:00:00"),
@@ -157,6 +157,7 @@ describe("export workbook checks", () => {
     const firstDetail = detailRows[1];
     expect(firstDetail[2]).toBe("EMP1");
     expect(String(firstDetail[3]).trim().length).toBeGreaterThan(0);
+    expect(firstDetail[4]).toBeGreaterThan(0);
 
     const summaryRow = summaryRows[1];
     expect(summaryRow[0]).toBe("EMP1");
