@@ -15,13 +15,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useForm } from "react-hook-form";
 import { format, parse } from "date-fns";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { buildEmpScope, parseRuleScope } from "@shared/rule-scope";
+import { buildEmpScope, normalizeEmpCode, parseRuleScope } from "@shared/rule-scope";
 import { insertRuleSchema, RULE_TYPES, type SpecialRule } from "@shared/schema";
 import * as XLSX from "xlsx";
 import { useAttendanceStore } from "@/store/attendanceStore";
 
 export default function Rules() {
   const { data: rules, isLoading } = useRules();
+  const { data: employees } = useEmployees();
   const deleteRule = useDeleteRule();
   const importRules = useImportRules();
   const { toast } = useToast();
@@ -31,6 +32,41 @@ export default function Rules() {
   const config = useAttendanceStore((state) => state.config);
   const setConfig = useAttendanceStore((state) => state.setConfig);
   const [importMode, setImportMode] = useState<"replace" | "merge">("replace");
+
+  const [debugEmployeeCode, setDebugEmployeeCode] = useState<string>("");
+  const [debugDate, setDebugDate] = useState<string>(format(new Date(), "yyyy-MM-dd"));
+
+  const debugRuleMatches = useMemo(() => {
+    if (!rules || !debugEmployeeCode || !debugDate) return [] as Array<{ rule: SpecialRule; reason: string }>;
+    const employee = (employees || []).find((emp) => String(emp.code) === debugEmployeeCode);
+    if (!employee) return [] as Array<{ rule: SpecialRule; reason: string }>;
+
+    return rules
+      .filter((rule) => debugDate >= rule.startDate && debugDate <= rule.endDate)
+      .map((rule) => {
+        if (rule.scope === "all") return { rule, reason: "مطابقة: النطاق = الكل" };
+        if (rule.scope.startsWith("dept:")) {
+          const value = rule.scope.replace("dept:", "").trim();
+          if (employee.department === value) return { rule, reason: `مطابقة: الإدارة (${value})` };
+          return null;
+        }
+        if (rule.scope.startsWith("sector:")) {
+          const value = rule.scope.replace("sector:", "").trim();
+          if (employee.sector === value) return { rule, reason: `مطابقة: القطاع (${value})` };
+          return null;
+        }
+        if (rule.scope.startsWith("emp:")) {
+          const parsed = parseRuleScope(rule.scope);
+          const normalizedCode = normalizeEmpCode(String(employee.code));
+          if (parsed.type === "emp" && parsed.values.includes(normalizedCode)) {
+            return { rule, reason: `مطابقة: كود الموظف (${normalizedCode}) ضمن النطاق` };
+          }
+        }
+        return null;
+      })
+      .filter(Boolean)
+      .sort((a, b) => (b!.rule.priority || 0) - (a!.rule.priority || 0)) as Array<{ rule: SpecialRule; reason: string }>;
+  }, [rules, employees, debugEmployeeCode, debugDate]);
 
   const handleDelete = async (id: number) => {
     if (!confirm("هل أنت متأكد من حذف هذه القاعدة؟")) return;
@@ -212,6 +248,52 @@ export default function Rules() {
                     </SelectContent>
                   </Select>
                 </div>
+              </CardContent>
+            </Card>
+
+
+            <Card>
+              <CardHeader>
+                <CardTitle>لوحة فحص تطبيق القواعد</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <Select value={debugEmployeeCode} onValueChange={setDebugEmployeeCode}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="اختر موظف" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {(employees || []).map((employee) => (
+                        <SelectItem key={employee.id} value={String(employee.code)}>
+                          {employee.code} - {employee.nameAr}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Input type="date" value={debugDate} onChange={(event) => setDebugDate(event.target.value)} />
+                  <div className="text-sm text-muted-foreground flex items-center">
+                    تعرض القواعد المطابقة فقط حسب التاريخ + النطاق + الأولوية.
+                  </div>
+                </div>
+
+                {!debugEmployeeCode ? (
+                  <p className="text-sm text-muted-foreground">اختر موظفاً لعرض القواعد المطبقة.</p>
+                ) : debugRuleMatches.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">لا توجد قاعدة مطابقة لهذا الموظف في التاريخ المحدد.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {debugRuleMatches.map(({ rule, reason }) => (
+                      <div key={rule.id} className="rounded-lg border border-border/60 p-3 text-sm">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-semibold">{rule.name}</span>
+                          <Badge variant="secondary">{rule.ruleType}</Badge>
+                          <Badge variant="outline">أولوية: {rule.priority || 0}</Badge>
+                        </div>
+                        <p className="text-muted-foreground mt-1">{reason}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </CardContent>
             </Card>
 

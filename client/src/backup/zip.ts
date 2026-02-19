@@ -15,7 +15,8 @@ const crcTable = (() => {
 
 const crc32 = (data: Uint8Array) => {
   let crc = 0xffffffff;
-  for (const byte of data) {
+  for (let i = 0; i < data.length; i += 1) {
+    const byte = data[i];
     crc = crcTable[(crc ^ byte) & 0xff] ^ (crc >>> 8);
   }
   return (crc ^ 0xffffffff) >>> 0;

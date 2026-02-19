@@ -14,6 +14,7 @@ import type {
   SpecialRule,
 } from "@shared/schema";
 import { processAttendanceRecords } from "@/engine/attendanceEngine";
+import { normalizeEmployeeCode } from "@shared/employee-code";
 import { useEffectsStore } from "@/store/effectsStore";
 import {
   clearPersistedState,
@@ -21,6 +22,30 @@ import {
   loadPersistedState,
   persistState,
 } from "@/store/persistence";
+
+
+const normalizeEmployeeTextDate = (value: unknown) => {
+  const raw = String(value ?? "").trim();
+  if (!raw) return "";
+  const normalized = raw.replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d))).replace(/\./g, "/");
+  const iso = normalized.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
+  if (iso) {
+    const [, y, m, d] = iso;
+    return `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
+  }
+  const dmy = normalized.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/);
+  if (dmy) {
+    const [, d, m, y] = dmy;
+    return `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
+  }
+  return "";
+};
+
+const normalizeEmployeeRow = (row: Partial<InsertEmployee>) => ({
+  ...row,
+  section: String((row as any).section || (row as any).department || "").trim() || "غير مسجل",
+  hireDate: normalizeEmployeeTextDate((row as any).hireDate ?? (row as any).hire_date ?? (row as any)["تاريخ التعيين"]),
+});
 
 const byCode = (employees: Employee[]) => new Map(employees.map((emp) => [emp.code, emp]));
 
@@ -66,7 +91,7 @@ type AttendanceActions = {
   createOfficialHoliday: (row: InsertOfficialHoliday) => OfficialHoliday;
   deleteOfficialHoliday: (id: number) => void;
   setOfficialHolidays: (rows: OfficialHoliday[]) => void;
-  processAttendance: (params: { startDate: string; endDate: string; timezoneOffsetMinutes?: number }) => {
+  processAttendance: (params: { startDate: string; endDate: string; timezoneOffsetMinutes?: number; employeeCodes?: string[] }) => {
     message: string;
     processedCount: number;
   };
@@ -205,7 +230,7 @@ export const AttendanceStoreProvider = ({ children }: { children: React.ReactNod
       window.clearTimeout(persistenceTimerRef.current);
     }
     persistenceTimerRef.current = window.setTimeout(() => {
-      persistState(stateRef.current).catch(() => {
+      persistState(stateRef.current as any).catch(() => {
         // ignore persistence errors
       });
     }, 400);
@@ -223,10 +248,12 @@ export const AttendanceStoreProvider = ({ children }: { children: React.ReactNod
       const nextEmployees = [...current.employees];
       let inserted = 0;
       rows.forEach((row) => {
-        if (!row.code || existingMap.has(row.code)) return;
+        const normalizedCode = normalizeEmployeeCode(row.code);
+        if (!normalizedCode || existingMap.has(normalizedCode)) return;
         const employee: Employee = {
           id: current.nextIds.employee + inserted,
-          ...row,
+          ...normalizeEmployeeRow(row),
+          code: normalizedCode,
           shiftStart: row.shiftStart || "09:00",
         } as Employee;
         nextEmployees.push(employee);
@@ -245,12 +272,14 @@ export const AttendanceStoreProvider = ({ children }: { children: React.ReactNod
     },
     createEmployee: (row) => {
       const current = stateRef.current;
-      if (current.employees.some((employee) => employee.code === row.code)) {
+      const normalizedCode = normalizeEmployeeCode(row.code);
+      if (current.employees.some((employee) => employee.code === normalizedCode)) {
         throw new Error("Employee code already exists");
       }
       const employee: Employee = {
         id: current.nextIds.employee,
-        ...row,
+        ...normalizeEmployeeRow(row),
+        code: normalizedCode,
         shiftStart: row.shiftStart || "09:00",
       } as Employee;
       setState({
@@ -277,10 +306,11 @@ export const AttendanceStoreProvider = ({ children }: { children: React.ReactNod
       const nextPunches = [...current.punches];
       rows.forEach((row) => {
         const punchDatetime = new Date(row.punchDatetime);
-        if (!row.employeeCode || Number.isNaN(punchDatetime.getTime())) return;
+        const employeeCode = normalizeEmployeeCode(row.employeeCode);
+        if (!employeeCode || Number.isNaN(punchDatetime.getTime())) return;
         nextPunches.push({
           id: nextPunches.length + 1,
-          employeeCode: row.employeeCode,
+          employeeCode,
           punchDatetime,
         } as BiometricPunch);
       });
@@ -419,7 +449,7 @@ export const AttendanceStoreProvider = ({ children }: { children: React.ReactNod
       const current = stateRef.current;
       setState({ ...current, officialHolidays: current.officialHolidays.filter((holiday) => holiday.id !== id) });
     },
-    processAttendance: ({ startDate, endDate, timezoneOffsetMinutes }) => {
+    processAttendance: ({ startDate, endDate, timezoneOffsetMinutes, employeeCodes }) => {
       const current = stateRef.current;
       const overrideMap = new Map<string, boolean>();
       current.attendanceRecords.forEach((record) => {
@@ -438,7 +468,10 @@ export const AttendanceStoreProvider = ({ children }: { children: React.ReactNod
         startDate,
         endDate,
         timezoneOffsetMinutes,
+        employeeCodes,
         workedOnOfficialHolidayOverrides: overrideMap,
+        defaultPermissionMinutes: current.config.defaultPermissionMinutes,
+        defaultHalfDayMinutes: current.config.defaultHalfDayMinutes,
       });
 
       const nextRecordIdStart = current.nextIds.record;
@@ -463,7 +496,9 @@ export const AttendanceStoreProvider = ({ children }: { children: React.ReactNod
         nextIds: { ...current.nextIds, record: nextRecordIdStart + withIds.length },
       });
 
-      return { message: "Processing completed", processedCount: withIds.length };
+      const employeeCount = employeeCodes?.length || current.employees.length;
+      const daySpan = Math.max(1, Math.floor((new Date(endDate).getTime() - new Date(startDate).getTime()) / 86400000) + 1);
+      return { message: `تمت إعادة المعالجة: ${employeeCount} موظف / ${daySpan} يوم`, processedCount: withIds.length };
     },
     wipeData: () => {
       void clearPersistedState();

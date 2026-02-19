@@ -1,15 +1,14 @@
+import { normalizeEmployeeCode } from "./employee-code";
 export type RuleScope =
   | { type: "all"; values: [] }
   | { type: "emp" | "dept" | "sector"; values: string[] };
 
 const normalizeScopeValue = (value: string) => value.trim();
 export const normalizeEmpCode = (value: string) => {
-  const trimmed = normalizeScopeValue(value);
-  if (!trimmed) return "";
-  if (/^\d+$/.test(trimmed)) {
-    return String(Number(trimmed));
-  }
-  return trimmed;
+  const normalized = normalizeEmployeeCode(normalizeScopeValue(value));
+  if (!normalized) return "";
+  if (/^\d+$/.test(normalized)) return String(Number(normalized));
+  return normalized;
 };
 
 const splitScopeValues = (raw: string) =>
