@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Search, FileDown } from "lucide-react";
 import { useEmployees } from "@/hooks/use-employees";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import * as XLSX from 'xlsx';
 import type { Employee } from "@shared/schema";
@@ -33,15 +33,15 @@ export default function Employees() {
   const [filters, setFilters] = useState({ sector: "all", branch: "all", department: "all" });
 
   const sectors = useMemo(
-    () => Array.from(new Set(employees?.map((emp) => emp.sector).filter(Boolean) || [])),
+    () => Array.from(new Set(employees?.map((emp) => emp.sector).filter((value): value is string => Boolean(value)) || [])),
     [employees]
   );
   const branches = useMemo(
-    () => Array.from(new Set(employees?.map((emp) => emp.branch).filter(Boolean) || [])),
+    () => Array.from(new Set(employees?.map((emp) => emp.branch).filter((value): value is string => Boolean(value)) || [])),
     [employees]
   );
   const departments = useMemo(
-    () => Array.from(new Set(employees?.map((emp) => emp.department).filter(Boolean) || [])),
+    () => Array.from(new Set(employees?.map((emp) => emp.department).filter((value): value is string => Boolean(value)) || [])),
     [employees]
   );
   
@@ -224,6 +224,7 @@ export default function Employees() {
             <DialogContent className="sm:max-w-[680px]" dir="rtl">
               <DialogHeader>
                 <DialogTitle>تفاصيل الموظف</DialogTitle>
+                <DialogDescription>عرض شامل لبيانات الموظف مع خيارات النسخ السريع.</DialogDescription>
               </DialogHeader>
               {selectedEmployee && (
                 <div className="space-y-6 text-sm">
