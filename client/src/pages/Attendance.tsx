@@ -359,12 +359,12 @@ export default function Attendance() {
       const checkInCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: 6 })];
       if (checkInCell && Number(checkInCell.v) > 0) {
         checkInCell.t = "n";
-        checkInCell.z = "hh:mm";
+        checkInCell.z = "hh:mm:ss";
       }
       const checkOutCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: 7 })];
       if (checkOutCell && Number(checkOutCell.v) > 0) {
         checkOutCell.t = "n";
-        checkOutCell.z = "hh:mm";
+        checkOutCell.z = "hh:mm:ss";
       }
       const hoursCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: 8 })];
       if (hoursCell) {
