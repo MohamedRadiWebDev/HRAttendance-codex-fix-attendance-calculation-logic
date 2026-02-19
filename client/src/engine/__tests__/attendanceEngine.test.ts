@@ -181,6 +181,6 @@ describe("attendance engine", () => {
     });
 
     const row = summaryRows[1];
-    expect(row[6]).toBe(2);
+    expect(row[8]).toBe(2);
   });
 });

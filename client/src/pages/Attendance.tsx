@@ -319,12 +319,12 @@ export default function Attendance() {
     detailSheet["!freeze"] = { xSplit: 0, ySplit: 1 };
     summarySheet["!freeze"] = { xSplit: 0, ySplit: 1 };
     detailSheet["!autofilter"] = { ref: "A1:Q1" };
-    summarySheet["!autofilter"] = { ref: "A1:L1" };
+    summarySheet["!autofilter"] = { ref: "A1:N1" };
     detailSheet["!rtl"] = true;
     summarySheet["!rtl"] = true;
 
     for (let rowIndex = 1; rowIndex < detailRows.length; rowIndex += 1) {
-      const isFridayRow = detailRows[rowIndex][8] === "جمعة";
+      const isFridayRow = detailRows[rowIndex][9] === "جمعة";
       const hasViolation = Number(detailRows[rowIndex][15] || 0) > 0;
       const fill = isFridayRow
         ? "D9E8FF"
@@ -350,11 +350,6 @@ export default function Attendance() {
       if (dateCell) {
         dateCell.t = "n";
         dateCell.z = "yyyy-mm-dd";
-      }
-      const hireDateCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: 4 })];
-      if (hireDateCell && Number(hireDateCell.v) > 0) {
-        hireDateCell.t = "n";
-        hireDateCell.z = "yyyy-mm-dd";
       }
       const checkInCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: 5 })];
       if (checkInCell && Number(checkInCell.v) > 0) {
@@ -397,12 +392,12 @@ export default function Attendance() {
           fill: { patternType: "solid", fgColor: { rgb: fill } },
         };
       }
-      const hireDateCell = summarySheet[XLSX.utils.encode_cell({ r: rowIndex, c: 2 })];
+      const hireDateCell = summarySheet[XLSX.utils.encode_cell({ r: rowIndex, c: 3 })];
       if (hireDateCell && Number(hireDateCell.v) > 0) {
         hireDateCell.t = "n";
         hireDateCell.z = "yyyy-mm-dd";
       }
-      for (let colIndex = 3; colIndex < summaryHeaders.length; colIndex += 1) {
+      for (let colIndex = 4; colIndex < summaryHeaders.length; colIndex += 1) {
         const cell = summarySheet[XLSX.utils.encode_cell({ r: rowIndex, c: colIndex })];
         if (cell) {
           cell.t = "n";
@@ -410,17 +405,33 @@ export default function Attendance() {
         }
       }
 
+      if (!summarySheet.O1) summarySheet.O1 = { t: "n", v: 0 };
+      if (!summarySheet.O2) summarySheet.O2 = { t: "n", v: 0 };
+      summarySheet.O1.t = "n";
+      summarySheet.O2.t = "n";
+      const toExcelSerial = (value?: string) => {
+        if (!value) return 0;
+        const [y, m, d] = value.split("-").map(Number);
+        if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) return 0;
+        return (Date.UTC(y, m - 1, d) - Date.UTC(1899, 11, 30)) / 86400000;
+      };
+      summarySheet.O1.v = toExcelSerial(dateRange.start);
+      summarySheet.O2.v = toExcelSerial(dateRange.end);
+      summarySheet.O1.z = "yyyy-mm-dd";
+      summarySheet.O2.z = "yyyy-mm-dd";
+
       const rowNumber = rowIndex + 1;
       const formulas = summaryFormulaByRow(rowNumber);
       const formulaCols: Array<[string, string]> = [
-        ["D", formulas.D],
         ["E", formulas.E],
         ["F", formulas.F],
         ["G", formulas.G],
         ["H", formulas.H],
+        ["I", formulas.I],
         ["J", formulas.J],
-        ["K", formulas.K],
         ["L", formulas.L],
+        ["M", formulas.M],
+        ["N", formulas.N],
       ];
       formulaCols.forEach(([col, formula]) => {
         const addr = `${col}${rowNumber}`;
