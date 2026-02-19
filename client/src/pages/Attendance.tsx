@@ -247,6 +247,7 @@ export default function Attendance() {
     const { detailHeaders, detailRows, summaryHeaders, summaryRows } = buildAttendanceExportRows({
       records,
       employees: employees || [],
+      reportStartDate: dateRange.start,
     });
 
     const hasValidHeaders = Array.isArray(detailHeaders)
@@ -318,14 +319,14 @@ export default function Attendance() {
 
     detailSheet["!freeze"] = { xSplit: 0, ySplit: 1 };
     summarySheet["!freeze"] = { xSplit: 0, ySplit: 1 };
-    detailSheet["!autofilter"] = { ref: "A1:R1" };
+    detailSheet["!autofilter"] = { ref: "A1:S1" };
     summarySheet["!autofilter"] = { ref: "A1:N1" };
     detailSheet["!rtl"] = true;
     summarySheet["!rtl"] = true;
 
     for (let rowIndex = 1; rowIndex < detailRows.length; rowIndex += 1) {
-      const isFridayRow = detailRows[rowIndex][10] === "جمعة";
-      const hasViolation = Number(detailRows[rowIndex][16] || 0) > 0;
+      const isFridayRow = detailRows[rowIndex][11] === "جمعة";
+      const hasViolation = Number(detailRows[rowIndex][17] || 0) > 0;
       const fill = isFridayRow
         ? "D9E8FF"
         : hasViolation
@@ -356,27 +357,32 @@ export default function Attendance() {
         hireDateCell.t = "n";
         hireDateCell.z = "yyyy-mm-dd";
       }
-      const checkInCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: 6 })];
+      const onboardingDaysCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: 6 })];
+      if (onboardingDaysCell) {
+        onboardingDaysCell.t = "n";
+        onboardingDaysCell.z = "0";
+      }
+      const checkInCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: 7 })];
       if (checkInCell && Number(checkInCell.v) > 0) {
         checkInCell.t = "n";
         checkInCell.z = "hh:mm:ss";
       }
-      const checkOutCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: 7 })];
+      const checkOutCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: 8 })];
       if (checkOutCell && Number(checkOutCell.v) > 0) {
         checkOutCell.t = "n";
         checkOutCell.z = "hh:mm:ss";
       }
-      const hoursCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: 8 })];
+      const hoursCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: 9 })];
       if (hoursCell) {
         hoursCell.t = "n";
         hoursCell.z = "0.00";
       }
-      const overtimeCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: 9 })];
+      const overtimeCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: 10 })];
       if (overtimeCell) {
         overtimeCell.t = "n";
         overtimeCell.z = "0.00";
       }
-      const penaltyColumns = [12, 13, 14, 15, 16];
+      const penaltyColumns = [13, 14, 15, 16, 17];
       penaltyColumns.forEach((colIndex) => {
         const penaltyCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: colIndex })];
         if (penaltyCell) {
@@ -410,25 +416,9 @@ export default function Attendance() {
         }
       }
 
-      if (!summarySheet.O1) summarySheet.O1 = { t: "n", v: 0 };
-      if (!summarySheet.O2) summarySheet.O2 = { t: "n", v: 0 };
-      summarySheet.O1.t = "n";
-      summarySheet.O2.t = "n";
-      const toExcelSerial = (value?: string) => {
-        if (!value) return 0;
-        const [y, m, d] = value.split("-").map(Number);
-        if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) return 0;
-        return (Date.UTC(y, m - 1, d) - Date.UTC(1899, 11, 30)) / 86400000;
-      };
-      summarySheet.O1.v = toExcelSerial(dateRange.start);
-      summarySheet.O2.v = toExcelSerial(dateRange.end);
-      summarySheet.O1.z = "yyyy-mm-dd";
-      summarySheet.O2.z = "yyyy-mm-dd";
-
       const rowNumber = rowIndex + 1;
       const formulas = summaryFormulaByRow(rowNumber);
       const formulaCols: Array<[string, string]> = [
-        ["E", formulas.E],
         ["F", formulas.F],
         ["G", formulas.G],
         ["H", formulas.H],

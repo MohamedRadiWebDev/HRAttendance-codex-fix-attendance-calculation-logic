@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildAttendanceExportRows, summaryFormulaByRow } from "@/exporters/attendanceExport";
+import { buildAttendanceExportRows, calculateOnboardingDays, summaryFormulaByRow } from "@/exporters/attendanceExport";
 import type { AttendanceRecord, Employee } from "@shared/schema";
 
 const employee: Employee = {
@@ -122,6 +122,7 @@ describe("export workbook checks", () => {
       "اسم الموظف",
       "القسم",
       "تاريخ التعيين",
+      "فترة الالتحاق",
       "الدخول",
       "الخروج",
       "ساعات العمل",
@@ -162,6 +163,7 @@ describe("export workbook checks", () => {
     expect(String(firstDetail[3]).trim().length).toBeGreaterThan(0);
     expect(firstDetail[4]).toBe("غير مسجل");
     expect(typeof firstDetail[5] === "number" || firstDetail[5] === "").toBe(true);
+    expect(firstDetail[6]).toBe(0);
 
     const summaryRow = summaryRows[1];
     expect(summaryRow[0]).toBe("EMP1");
@@ -179,13 +181,12 @@ describe("export workbook checks", () => {
     expect(summaryRow[13]).toBe(1);
 
     const formulas = summaryFormulaByRow(2);
-    expect(formulas.E).toBe('IF($D2="","",IF($D2<=$O$1,0,IF($D2>$O$2,$O$2-$O$1+1,$D2-$O$1)))');
-    expect(formulas.F).toBe('SUMIF(تفصيلي!$C:$C,$A2,تفصيلي!$M:$M)');
-    expect(formulas.I).toBe('SUMIF(تفصيلي!$C:$C,$A2,تفصيلي!$P:$P)*2');
-    expect(formulas.L).toBe('COUNTIFS(تفصيلي!$C:$C,$A2,تفصيلي!$K:$K,"جمعة",تفصيلي!$L:$L,"حضور")');
-    expect(formulas.M).toBe('COUNTIFS(تفصيلي!$C:$C,$A2,تفصيلي!$K:$K,"إجازة رسمية",تفصيلي!$L:$L,"حضور")');
+    expect(formulas.F).toBe('SUMIF(تفصيلي!$C:$C,$A2,تفصيلي!$N:$N)');
+    expect(formulas.I).toBe('SUMIF(تفصيلي!$C:$C,$A2,تفصيلي!$Q:$Q)*2');
+    expect(formulas.L).toBe('COUNTIFS(تفصيلي!$C:$C,$A2,تفصيلي!$L:$L,"جمعة",تفصيلي!$M:$M,"حضور")');
+    expect(formulas.M).toBe('COUNTIFS(تفصيلي!$C:$C,$A2,تفصيلي!$L:$L,"إجازة رسمية",تفصيلي!$M:$M,"حضور")');
 
-    const holidayDetailRow = detailRows.find((row) => row[0] !== "التاريخ" && row[10] === "إجازة رسمية");
+    const holidayDetailRow = detailRows.find((row) => row[0] !== "التاريخ" && row[11] === "إجازة رسمية");
     expect(holidayDetailRow).toBeTruthy();
 
     detailRows.flat().forEach((cell) => {
@@ -203,4 +204,12 @@ describe("export workbook checks", () => {
     expect(flat.includes("1970-01-01")).toBe(false);
     expect(summaryHeaders).toBeDefined();
   });
+
+
+  it("calculates onboarding days as integer difference and clamps to zero", () => {
+    expect(calculateOnboardingDays("2025-02-09", "2025-02-01")).toBe(8);
+    expect(calculateOnboardingDays("2025-02-01", "2025-02-01")).toBe(0);
+    expect(calculateOnboardingDays("2025-01-20", "2025-02-01")).toBe(0);
+  });
+
 });

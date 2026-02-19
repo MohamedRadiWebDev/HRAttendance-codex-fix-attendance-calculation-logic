@@ -29,6 +29,23 @@ const normalizeHireDate = (value: unknown): string => {
   return "";
 };
 
+
+
+const parseIsoDateToUtcMs = (value: string): number | null => {
+  const [y, m, d] = value.split("-").map(Number);
+  if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) return null;
+  return Date.UTC(y, m - 1, d);
+};
+
+export const calculateOnboardingDays = (hireDate: string, reportStartDate: string): number => {
+  if (!hireDate || !reportStartDate) return 0;
+  const hireMs = parseIsoDateToUtcMs(hireDate);
+  const startMs = parseIsoDateToUtcMs(reportStartDate);
+  if (hireMs === null || startMs === null) return 0;
+  if (hireMs <= startMs) return 0;
+  return Math.max(0, Math.floor((hireMs - startMs) / 86400000));
+};
+
 const toTimeText = (value: unknown) => {
   if (!value) return "";
   if (value instanceof Date) {
@@ -67,23 +84,24 @@ export const SUMMARY_HEADERS = [
 ] as const;
 
 export const summaryFormulaByRow = (rowNumber: number) => ({
-  E: `IF($D${rowNumber}="","",IF($D${rowNumber}<=$O$1,0,IF($D${rowNumber}>$O$2,$O$2-$O$1+1,$D${rowNumber}-$O$1)))`,
-  F: `SUMIF(تفصيلي!$C:$C,$A${rowNumber},تفصيلي!$M:$M)`,
-  G: `SUMIF(تفصيلي!$C:$C,$A${rowNumber},تفصيلي!$N:$N)`,
-  H: `SUMIF(تفصيلي!$C:$C,$A${rowNumber},تفصيلي!$O:$O)`,
-  I: `SUMIF(تفصيلي!$C:$C,$A${rowNumber},تفصيلي!$P:$P)*2`,
+  F: `SUMIF(تفصيلي!$C:$C,$A${rowNumber},تفصيلي!$N:$N)`,
+  G: `SUMIF(تفصيلي!$C:$C,$A${rowNumber},تفصيلي!$O:$O)`,
+  H: `SUMIF(تفصيلي!$C:$C,$A${rowNumber},تفصيلي!$P:$P)`,
+  I: `SUMIF(تفصيلي!$C:$C,$A${rowNumber},تفصيلي!$Q:$Q)*2`,
   J: `F${rowNumber}+G${rowNumber}+H${rowNumber}+I${rowNumber}`,
-  L: `COUNTIFS(تفصيلي!$C:$C,$A${rowNumber},تفصيلي!$K:$K,"جمعة",تفصيلي!$L:$L,"حضور")`,
-  M: `COUNTIFS(تفصيلي!$C:$C,$A${rowNumber},تفصيلي!$K:$K,"إجازة رسمية",تفصيلي!$L:$L,"حضور")`,
+  L: `COUNTIFS(تفصيلي!$C:$C,$A${rowNumber},تفصيلي!$L:$L,"جمعة",تفصيلي!$M:$M,"حضور")`,
+  M: `COUNTIFS(تفصيلي!$C:$C,$A${rowNumber},تفصيلي!$L:$L,"إجازة رسمية",تفصيلي!$M:$M,"حضور")`,
   N: `L${rowNumber}+M${rowNumber}`,
 });
 
 export const buildAttendanceExportRows = ({
   records,
   employees,
+  reportStartDate,
 }: {
   records: AttendanceRecord[];
   employees: Employee[];
+  reportStartDate?: string;
 }): AttendanceExportResult => {
   const employeeMap = new Map(employees.map((emp) => [normalizeEmployeeCode(emp.code), emp.nameAr]));
   const employeeMetaMap = new Map(employees.map((emp) => [normalizeEmployeeCode(emp.code), emp]));
@@ -99,6 +117,14 @@ export const buildAttendanceExportRows = ({
     const value = String((employeeMeta as any)?.section || (employeeMeta as any)?.department || "").trim();
     return value || "غير مسجل";
   };
+  const effectiveReportStartDate = reportStartDate || (records.map((r) => String(r.date || "")).filter(Boolean).sort()[0] || "");
+  const getOnboardingDaysByCode = (code: string) => {
+    const employeeMeta = employeeMetaMap.get(normalizeEmployeeCode(code));
+    const hireDateText = normalizeHireDate(
+      (employeeMeta as any)?.hireDate ?? (employeeMeta as any)?.hire_date ?? (employeeMeta as any)?.["تاريخ التعيين"]
+    );
+    return calculateOnboardingDays(hireDateText, effectiveReportStartDate);
+  };
 
   const detailHeaders = [
     "التاريخ",
@@ -107,6 +133,7 @@ export const buildAttendanceExportRows = ({
     "اسم الموظف",
     "القسم",
     "تاريخ التعيين",
+    "فترة الالتحاق",
     "الدخول",
     "الخروج",
     "ساعات العمل",
@@ -254,6 +281,7 @@ export const buildAttendanceExportRows = ({
       employeeMap.get(normalizeEmployeeCode(record.employeeCode)) || "(غير موجود بالماستر)",
       getDepartmentByCode(record.employeeCode),
       getHireDateSerialByCode(record.employeeCode),
+      getOnboardingDaysByCode(record.employeeCode),
       record.checkIn ? parseTimeToSeconds(toTimeText(record.checkIn)) / 86400 : "",
       record.checkOut ? parseTimeToSeconds(toTimeText(record.checkOut)) / 86400 : "",
       typeof record.totalHours === "number" ? Number(record.totalHours.toFixed(2)) : 0,
@@ -353,7 +381,7 @@ export const buildAttendanceExportRows = ({
       summary.name,
       getDepartmentByCode(summary.code),
       getHireDateSerialByCode(summary.code),
-      0,
+      getOnboardingDaysByCode(summary.code),
       summary.totalLate,
       summary.totalEarlyLeave,
       summary.totalMissingStamp,
