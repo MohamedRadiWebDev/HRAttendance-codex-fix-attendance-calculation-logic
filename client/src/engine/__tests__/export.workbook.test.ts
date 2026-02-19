@@ -121,6 +121,7 @@ describe("export workbook checks", () => {
       "الكود",
       "اسم الموظف",
       "القسم",
+      "تاريخ التعيين",
       "الدخول",
       "الخروج",
       "ساعات العمل",
@@ -159,13 +160,14 @@ describe("export workbook checks", () => {
     const firstDetail = detailRows[1];
     expect(firstDetail[2]).toBe("EMP1");
     expect(String(firstDetail[3]).trim().length).toBeGreaterThan(0);
-    expect(String(firstDetail[4]).trim().length).toBe(0);
+    expect(firstDetail[4]).toBe("غير مسجل");
+    expect(typeof firstDetail[5] === "number" || firstDetail[5] === "").toBe(true);
 
     const summaryRow = summaryRows[1];
     expect(summaryRow[0]).toBe("EMP1");
     expect(String(summaryRow[1]).trim().length).toBeGreaterThan(0);
-    expect(summaryRow[2]).toBe("");
-    expect(typeof summaryRow[3] === "number" || summaryRow[3] === "").toBe(true);
+    expect(summaryRow[2]).toBe("غير مسجل");
+    expect(summaryRow[3]).toBeGreaterThan(0);
     expect(summaryRow[4]).toBe(0);
     expect(summaryRow[5]).toBe(0);
     expect(summaryRow[6]).toBe(0);
@@ -178,12 +180,12 @@ describe("export workbook checks", () => {
 
     const formulas = summaryFormulaByRow(2);
     expect(formulas.E).toBe('IF($D2="","",IF($D2<=$O$1,0,IF($D2>$O$2,$O$2-$O$1+1,$D2-$O$1)))');
-    expect(formulas.F).toBe('SUMIF(تفصيلي!$C:$C,$A2,تفصيلي!$L:$L)');
-    expect(formulas.I).toBe('SUMIF(تفصيلي!$C:$C,$A2,تفصيلي!$O:$O)*2');
-    expect(formulas.L).toBe('COUNTIFS(تفصيلي!$C:$C,$A2,تفصيلي!$J:$J,"جمعة",تفصيلي!$K:$K,"حضور")');
-    expect(formulas.M).toBe('COUNTIFS(تفصيلي!$C:$C,$A2,تفصيلي!$J:$J,"إجازة رسمية",تفصيلي!$K:$K,"حضور")');
+    expect(formulas.F).toBe('SUMIF(تفصيلي!$C:$C,$A2,تفصيلي!$M:$M)');
+    expect(formulas.I).toBe('SUMIF(تفصيلي!$C:$C,$A2,تفصيلي!$P:$P)*2');
+    expect(formulas.L).toBe('COUNTIFS(تفصيلي!$C:$C,$A2,تفصيلي!$K:$K,"جمعة",تفصيلي!$L:$L,"حضور")');
+    expect(formulas.M).toBe('COUNTIFS(تفصيلي!$C:$C,$A2,تفصيلي!$K:$K,"إجازة رسمية",تفصيلي!$L:$L,"حضور")');
 
-    const holidayDetailRow = detailRows.find((row) => row[0] !== "التاريخ" && row[9] === "إجازة رسمية");
+    const holidayDetailRow = detailRows.find((row) => row[0] !== "التاريخ" && row[10] === "إجازة رسمية");
     expect(holidayDetailRow).toBeTruthy();
 
     detailRows.flat().forEach((cell) => {

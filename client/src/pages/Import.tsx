@@ -38,6 +38,41 @@ const buildNormalizedRow = (row: Record<string, unknown>) => {
   return normalized;
 };
 
+
+
+const toArabicDigitsNormalized = (value: string) => value.replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d)));
+
+const normalizeExcelLocalDate = (value: unknown): string => {
+  if (value === null || value === undefined || String(value).trim() === "") return "";
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const base = new Date(Date.UTC(1899, 11, 30));
+    const date = new Date(base.getTime() + value * 24 * 60 * 60 * 1000);
+    if (!isValid(date)) return "";
+    const y = date.getUTCFullYear();
+    const m = String(date.getUTCMonth() + 1).padStart(2, "0");
+    const d = String(date.getUTCDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+  }
+  if (value instanceof Date) {
+    if (!isValid(value)) return "";
+    const y = value.getFullYear();
+    const m = String(value.getMonth() + 1).padStart(2, "0");
+    const d = String(value.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+  }
+  const raw = toArabicDigitsNormalized(String(value).trim()).replace(/\./g, "/");
+  const iso = raw.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
+  if (iso) {
+    const [, y, m, d] = iso;
+    return `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
+  }
+  const dmy = raw.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/);
+  if (dmy) {
+    const [, d, m, y] = dmy;
+    return `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
+  }
+  return "";
+};
 const getImportCell = (row: Record<string, unknown>, aliases: string[]) => {
   for (const alias of aliases) {
     const direct = row[alias];
@@ -141,11 +176,11 @@ export default function Import() {
           nameAr: String(getImportCell(row, ['الاسم', 'Name'])),
           sector: String(getImportCell(row, ['القطاع', 'Sector'])),
           department: String(getImportCell(row, ['الادارة', 'الإدارة', 'Department'])),
-          section: String(getImportCell(row, ['القسم', 'Section'])),
+          section: String(getImportCell(row, ['القسم', 'Section', 'section', 'department', 'Department'])).trim() || 'غير مسجل',
           jobTitle: String(getImportCell(row, ['الوظيفة', 'Job Title'])),
           branch: String(getImportCell(row, ['الفرع', 'Branch'])),
           governorate: String(getImportCell(row, ['المحافظة', 'Governorate'])),
-          hireDate: String(getImportCell(row, ['تاريخ التعيين', 'Hire Date'])),
+          hireDate: normalizeExcelLocalDate(getImportCell(row, ['تاريخ التعيين', 'Hire Date', 'hire_date', 'hireDate', 'Start Date'])),
           terminationDate: String(getImportCell(row, ['تاريخ ترك العمل', 'Termination Date'])),
           terminationReason: String(getImportCell(row, ['سبب ترك العمل', 'Termination Reason'])),
           serviceDuration: String(getImportCell(row, ['بيان مدة الخدمة', 'Service Duration'])),

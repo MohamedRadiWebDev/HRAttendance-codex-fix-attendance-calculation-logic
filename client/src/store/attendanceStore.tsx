@@ -23,6 +23,30 @@ import {
   persistState,
 } from "@/store/persistence";
 
+
+const normalizeEmployeeTextDate = (value: unknown) => {
+  const raw = String(value ?? "").trim();
+  if (!raw) return "";
+  const normalized = raw.replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d))).replace(/\./g, "/");
+  const iso = normalized.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
+  if (iso) {
+    const [, y, m, d] = iso;
+    return `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
+  }
+  const dmy = normalized.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/);
+  if (dmy) {
+    const [, d, m, y] = dmy;
+    return `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
+  }
+  return "";
+};
+
+const normalizeEmployeeRow = (row: Partial<InsertEmployee>) => ({
+  ...row,
+  section: String((row as any).section || (row as any).department || "").trim() || "غير مسجل",
+  hireDate: normalizeEmployeeTextDate((row as any).hireDate ?? (row as any).hire_date ?? (row as any)["تاريخ التعيين"]),
+});
+
 const byCode = (employees: Employee[]) => new Map(employees.map((emp) => [emp.code, emp]));
 
 type AttendanceState = {
@@ -228,7 +252,7 @@ export const AttendanceStoreProvider = ({ children }: { children: React.ReactNod
         if (!normalizedCode || existingMap.has(normalizedCode)) return;
         const employee: Employee = {
           id: current.nextIds.employee + inserted,
-          ...row,
+          ...normalizeEmployeeRow(row),
           code: normalizedCode,
           shiftStart: row.shiftStart || "09:00",
         } as Employee;
@@ -254,7 +278,7 @@ export const AttendanceStoreProvider = ({ children }: { children: React.ReactNod
       }
       const employee: Employee = {
         id: current.nextIds.employee,
-        ...row,
+        ...normalizeEmployeeRow(row),
         code: normalizedCode,
         shiftStart: row.shiftStart || "09:00",
       } as Employee;

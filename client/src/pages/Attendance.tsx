@@ -318,14 +318,14 @@ export default function Attendance() {
 
     detailSheet["!freeze"] = { xSplit: 0, ySplit: 1 };
     summarySheet["!freeze"] = { xSplit: 0, ySplit: 1 };
-    detailSheet["!autofilter"] = { ref: "A1:Q1" };
+    detailSheet["!autofilter"] = { ref: "A1:R1" };
     summarySheet["!autofilter"] = { ref: "A1:N1" };
     detailSheet["!rtl"] = true;
     summarySheet["!rtl"] = true;
 
     for (let rowIndex = 1; rowIndex < detailRows.length; rowIndex += 1) {
-      const isFridayRow = detailRows[rowIndex][9] === "جمعة";
-      const hasViolation = Number(detailRows[rowIndex][15] || 0) > 0;
+      const isFridayRow = detailRows[rowIndex][10] === "جمعة";
+      const hasViolation = Number(detailRows[rowIndex][16] || 0) > 0;
       const fill = isFridayRow
         ? "D9E8FF"
         : hasViolation
@@ -351,27 +351,32 @@ export default function Attendance() {
         dateCell.t = "n";
         dateCell.z = "yyyy-mm-dd";
       }
-      const checkInCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: 5 })];
+      const hireDateCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: 5 })];
+      if (hireDateCell && Number(hireDateCell.v) > 0) {
+        hireDateCell.t = "n";
+        hireDateCell.z = "yyyy-mm-dd";
+      }
+      const checkInCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: 6 })];
       if (checkInCell && Number(checkInCell.v) > 0) {
         checkInCell.t = "n";
         checkInCell.z = "hh:mm:ss";
       }
-      const checkOutCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: 6 })];
+      const checkOutCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: 7 })];
       if (checkOutCell && Number(checkOutCell.v) > 0) {
         checkOutCell.t = "n";
         checkOutCell.z = "hh:mm:ss";
       }
-      const hoursCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: 7 })];
+      const hoursCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: 8 })];
       if (hoursCell) {
         hoursCell.t = "n";
         hoursCell.z = "0.00";
       }
-      const overtimeCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: 8 })];
+      const overtimeCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: 9 })];
       if (overtimeCell) {
         overtimeCell.t = "n";
         overtimeCell.z = "0.00";
       }
-      const penaltyColumns = [11, 12, 13, 14, 15];
+      const penaltyColumns = [12, 13, 14, 15, 16];
       penaltyColumns.forEach((colIndex) => {
         const penaltyCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: colIndex })];
         if (penaltyCell) {

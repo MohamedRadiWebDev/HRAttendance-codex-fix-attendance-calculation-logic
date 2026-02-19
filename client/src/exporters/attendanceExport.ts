@@ -68,13 +68,13 @@ export const SUMMARY_HEADERS = [
 
 export const summaryFormulaByRow = (rowNumber: number) => ({
   E: `IF($D${rowNumber}="","",IF($D${rowNumber}<=$O$1,0,IF($D${rowNumber}>$O$2,$O$2-$O$1+1,$D${rowNumber}-$O$1)))`,
-  F: `SUMIF(تفصيلي!$C:$C,$A${rowNumber},تفصيلي!$L:$L)`,
-  G: `SUMIF(تفصيلي!$C:$C,$A${rowNumber},تفصيلي!$M:$M)`,
-  H: `SUMIF(تفصيلي!$C:$C,$A${rowNumber},تفصيلي!$N:$N)`,
-  I: `SUMIF(تفصيلي!$C:$C,$A${rowNumber},تفصيلي!$O:$O)*2`,
+  F: `SUMIF(تفصيلي!$C:$C,$A${rowNumber},تفصيلي!$M:$M)`,
+  G: `SUMIF(تفصيلي!$C:$C,$A${rowNumber},تفصيلي!$N:$N)`,
+  H: `SUMIF(تفصيلي!$C:$C,$A${rowNumber},تفصيلي!$O:$O)`,
+  I: `SUMIF(تفصيلي!$C:$C,$A${rowNumber},تفصيلي!$P:$P)*2`,
   J: `F${rowNumber}+G${rowNumber}+H${rowNumber}+I${rowNumber}`,
-  L: `COUNTIFS(تفصيلي!$C:$C,$A${rowNumber},تفصيلي!$J:$J,"جمعة",تفصيلي!$K:$K,"حضور")`,
-  M: `COUNTIFS(تفصيلي!$C:$C,$A${rowNumber},تفصيلي!$J:$J,"إجازة رسمية",تفصيلي!$K:$K,"حضور")`,
+  L: `COUNTIFS(تفصيلي!$C:$C,$A${rowNumber},تفصيلي!$K:$K,"جمعة",تفصيلي!$L:$L,"حضور")`,
+  M: `COUNTIFS(تفصيلي!$C:$C,$A${rowNumber},تفصيلي!$K:$K,"إجازة رسمية",تفصيلي!$L:$L,"حضور")`,
   N: `L${rowNumber}+M${rowNumber}`,
 });
 
@@ -96,7 +96,8 @@ export const buildAttendanceExportRows = ({
   };
   const getDepartmentByCode = (code: string) => {
     const employeeMeta = employeeMetaMap.get(normalizeEmployeeCode(code));
-    return String((employeeMeta as any)?.section || (employeeMeta as any)?.department || "").trim();
+    const value = String((employeeMeta as any)?.section || (employeeMeta as any)?.department || "").trim();
+    return value || "غير مسجل";
   };
 
   const detailHeaders = [
@@ -105,6 +106,7 @@ export const buildAttendanceExportRows = ({
     "الكود",
     "اسم الموظف",
     "القسم",
+    "تاريخ التعيين",
     "الدخول",
     "الخروج",
     "ساعات العمل",
@@ -251,6 +253,7 @@ export const buildAttendanceExportRows = ({
       record.employeeCode,
       employeeMap.get(normalizeEmployeeCode(record.employeeCode)) || "(غير موجود بالماستر)",
       getDepartmentByCode(record.employeeCode),
+      getHireDateSerialByCode(record.employeeCode),
       record.checkIn ? parseTimeToSeconds(toTimeText(record.checkIn)) / 86400 : "",
       record.checkOut ? parseTimeToSeconds(toTimeText(record.checkOut)) / 86400 : "",
       typeof record.totalHours === "number" ? Number(record.totalHours.toFixed(2)) : 0,
