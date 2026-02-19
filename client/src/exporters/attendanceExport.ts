@@ -11,6 +11,23 @@ const toExcelDateSerial = (value: string) => {
   return (Date.UTC(yearRaw, monthRaw - 1, dayRaw) - Date.UTC(1899, 11, 30)) / 86400000;
 };
 
+const normalizeHireDate = (value: unknown): string => {
+  const raw = String(value ?? "").trim();
+  if (!raw) return "";
+  const normalized = raw.replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d))).replace(/\./g, "/");
+  const iso = normalized.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
+  if (iso) {
+    const [, y, m, d] = iso;
+    return `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
+  }
+  const dmy = normalized.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/);
+  if (dmy) {
+    const [, d, m, y] = dmy;
+    return `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
+  }
+  return "";
+};
+
 const toTimeText = (value: unknown) => {
   if (!value) return "";
   if (value instanceof Date) {
@@ -34,6 +51,7 @@ export type AttendanceExportResult = {
 export const SUMMARY_HEADERS = [
   "الكود",
   "اسم الموظف",
+  "تاريخ التعيين",
   "إجمالي التأخيرات",
   "إجمالي الانصراف المبكر",
   "إجمالي سهو البصمة",
@@ -46,14 +64,14 @@ export const SUMMARY_HEADERS = [
 ] as const;
 
 export const summaryFormulaByRow = (rowNumber: number) => ({
-  C: `SUMIF(تفصيلي!$C:$C,$A${rowNumber},تفصيلي!$K:$K)`,
   D: `SUMIF(تفصيلي!$C:$C,$A${rowNumber},تفصيلي!$L:$L)`,
   E: `SUMIF(تفصيلي!$C:$C,$A${rowNumber},تفصيلي!$M:$M)`,
-  F: `SUMIF(تفصيلي!$C:$C,$A${rowNumber},تفصيلي!$N:$N)*2`,
-  G: `C${rowNumber}+D${rowNumber}+E${rowNumber}+F${rowNumber}`,
-  I: `COUNTIFS(تفصيلي!$C:$C,$A${rowNumber},تفصيلي!$I:$I,"جمعة",تفصيلي!$J:$J,"حضور")`,
-  J: `COUNTIFS(تفصيلي!$C:$C,$A${rowNumber},تفصيلي!$I:$I,"إجازة رسمية",تفصيلي!$J:$J,"حضور")`,
-  K: `I${rowNumber}+J${rowNumber}`,
+  F: `SUMIF(تفصيلي!$C:$C,$A${rowNumber},تفصيلي!$N:$N)`,
+  G: `SUMIF(تفصيلي!$C:$C,$A${rowNumber},تفصيلي!$O:$O)*2`,
+  H: `D${rowNumber}+E${rowNumber}+F${rowNumber}+G${rowNumber}`,
+  J: `COUNTIFS(تفصيلي!$C:$C,$A${rowNumber},تفصيلي!$J:$J,"جمعة",تفصيلي!$K:$K,"حضور")`,
+  K: `COUNTIFS(تفصيلي!$C:$C,$A${rowNumber},تفصيلي!$J:$J,"إجازة رسمية",تفصيلي!$K:$K,"حضور")`,
+  L: `J${rowNumber}+K${rowNumber}`,
 });
 
 export const buildAttendanceExportRows = ({
@@ -64,12 +82,21 @@ export const buildAttendanceExportRows = ({
   employees: Employee[];
 }): AttendanceExportResult => {
   const employeeMap = new Map(employees.map((emp) => [emp.code, emp.nameAr]));
+  const employeeMetaMap = new Map(employees.map((emp) => [emp.code, emp]));
+  const getHireDateSerialByCode = (code: string) => {
+    const employeeMeta = employeeMetaMap.get(code);
+    const hireDateText = normalizeHireDate(
+      (employeeMeta as any)?.hireDate ?? (employeeMeta as any)?.hire_date ?? (employeeMeta as any)?.["تاريخ التعيين"]
+    );
+    return hireDateText ? toExcelDateSerial(hireDateText) : "";
+  };
 
   const detailHeaders = [
     "التاريخ",
     "اليوم",
     "الكود",
     "اسم الموظف",
+    "تاريخ التعيين",
     "الدخول",
     "الخروج",
     "ساعات العمل",
@@ -210,11 +237,14 @@ export const buildAttendanceExportRows = ({
       ? Array.from(new Set(notesTokens)).join(" + ")
       : (record.notes || "").replace(/[\r\n]+/g, " ").trim();
 
+    const hireDateSerial = getHireDateSerialByCode(record.employeeCode);
+
     const detailRow = [
       excelDateSerial,
       dayNames[dayIndex],
       record.employeeCode,
       employeeMap.get(record.employeeCode) || "(غير موجود بالماستر)",
+      hireDateSerial,
       record.checkIn ? parseTimeToSeconds(toTimeText(record.checkIn)) / 86400 : "",
       record.checkOut ? parseTimeToSeconds(toTimeText(record.checkOut)) / 86400 : "",
       typeof record.totalHours === "number" ? Number(record.totalHours.toFixed(2)) : 0,
@@ -311,6 +341,7 @@ export const buildAttendanceExportRows = ({
     summaryRows.push([
       summary.code,
       summary.name,
+      getHireDateSerialByCode(summary.code),
       summary.totalLate,
       summary.totalEarlyLeave,
       summary.totalMissingStamp,

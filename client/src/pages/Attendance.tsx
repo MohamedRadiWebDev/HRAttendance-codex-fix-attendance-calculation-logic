@@ -318,14 +318,14 @@ export default function Attendance() {
 
     detailSheet["!freeze"] = { xSplit: 0, ySplit: 1 };
     summarySheet["!freeze"] = { xSplit: 0, ySplit: 1 };
-    detailSheet["!autofilter"] = { ref: `A1:${XLSX.utils.encode_col(detailHeaders.length - 1)}1` };
-    summarySheet["!autofilter"] = { ref: `A1:${XLSX.utils.encode_col(summaryHeaders.length - 1)}1` };
+    detailSheet["!autofilter"] = { ref: "A1:Q1" };
+    summarySheet["!autofilter"] = { ref: "A1:L1" };
     detailSheet["!rtl"] = true;
     summarySheet["!rtl"] = true;
 
     for (let rowIndex = 1; rowIndex < detailRows.length; rowIndex += 1) {
       const isFridayRow = detailRows[rowIndex][8] === "جمعة";
-      const hasViolation = Number(detailRows[rowIndex][14] || 0) > 0;
+      const hasViolation = Number(detailRows[rowIndex][15] || 0) > 0;
       const fill = isFridayRow
         ? "D9E8FF"
         : hasViolation
@@ -351,27 +351,32 @@ export default function Attendance() {
         dateCell.t = "n";
         dateCell.z = "yyyy-mm-dd";
       }
-      const checkInCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: 4 })];
+      const hireDateCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: 4 })];
+      if (hireDateCell && Number(hireDateCell.v) > 0) {
+        hireDateCell.t = "n";
+        hireDateCell.z = "yyyy-mm-dd";
+      }
+      const checkInCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: 5 })];
       if (checkInCell && Number(checkInCell.v) > 0) {
         checkInCell.t = "n";
         checkInCell.z = "hh:mm:ss";
       }
-      const checkOutCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: 5 })];
+      const checkOutCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: 6 })];
       if (checkOutCell && Number(checkOutCell.v) > 0) {
         checkOutCell.t = "n";
         checkOutCell.z = "hh:mm:ss";
       }
-      const hoursCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: 6 })];
+      const hoursCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: 7 })];
       if (hoursCell) {
         hoursCell.t = "n";
         hoursCell.z = "0.00";
       }
-      const overtimeCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: 7 })];
+      const overtimeCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: 8 })];
       if (overtimeCell) {
         overtimeCell.t = "n";
         overtimeCell.z = "0.00";
       }
-      const penaltyColumns = [10, 11, 12, 13, 14];
+      const penaltyColumns = [11, 12, 13, 14, 15];
       penaltyColumns.forEach((colIndex) => {
         const penaltyCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: colIndex })];
         if (penaltyCell) {
@@ -392,7 +397,12 @@ export default function Attendance() {
           fill: { patternType: "solid", fgColor: { rgb: fill } },
         };
       }
-      for (let colIndex = 2; colIndex < summaryHeaders.length; colIndex += 1) {
+      const hireDateCell = summarySheet[XLSX.utils.encode_cell({ r: rowIndex, c: 2 })];
+      if (hireDateCell && Number(hireDateCell.v) > 0) {
+        hireDateCell.t = "n";
+        hireDateCell.z = "yyyy-mm-dd";
+      }
+      for (let colIndex = 3; colIndex < summaryHeaders.length; colIndex += 1) {
         const cell = summarySheet[XLSX.utils.encode_cell({ r: rowIndex, c: colIndex })];
         if (cell) {
           cell.t = "n";
@@ -403,14 +413,14 @@ export default function Attendance() {
       const rowNumber = rowIndex + 1;
       const formulas = summaryFormulaByRow(rowNumber);
       const formulaCols: Array<[string, string]> = [
-        ["C", formulas.C],
         ["D", formulas.D],
         ["E", formulas.E],
         ["F", formulas.F],
         ["G", formulas.G],
-        ["I", formulas.I],
+        ["H", formulas.H],
         ["J", formulas.J],
         ["K", formulas.K],
+        ["L", formulas.L],
       ];
       formulaCols.forEach(([col, formula]) => {
         const addr = `${col}${rowNumber}`;
