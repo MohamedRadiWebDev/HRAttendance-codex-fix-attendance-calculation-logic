@@ -303,7 +303,7 @@ export const buildAttendanceExportRows = ({
 
   const summaryObjects = Array.from(summaryByEmployee.values()).map((summary) => {
     const weightedAbsence = summary.absenceDays * 2;
-    const totalPenalties = summary.late + summary.early + summary.missing + (weightedAbsence * 2);
+    const totalPenalties = summary.late + summary.early + summary.missing + weightedAbsence;
     return {
       "الكود": summary.code,
       "اسم الموظف": summary.name,
