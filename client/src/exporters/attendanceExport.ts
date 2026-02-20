@@ -96,15 +96,6 @@ const arabicDayName = (isoDate: string) => {
   return dayNames[new Date(ms).getUTCDay()] || "";
 };
 
-export const calculateTerminationPeriodDays = (terminationDate: string, reportEndDate: string): number => {
-  if (!terminationDate || !reportEndDate) return 0;
-  const terminationMs = parseIsoDateToUtcMs(terminationDate);
-  const endMs = parseIsoDateToUtcMs(reportEndDate);
-  if (terminationMs === null || endMs === null) return 0;
-  if (terminationMs >= endMs) return 0;
-  return Math.max(0, Math.floor((endMs - terminationMs) / 86400000));
-};
-
 const toTimeText = (value: unknown) => {
   if (!value) return "";
   if (value instanceof Date) {
