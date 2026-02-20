@@ -242,7 +242,7 @@ export default function Attendance() {
       }
     });
   };
-  const handleExport = () => {
+  const handleExport = async () => {
     if (!records || records.length === 0) return;
     const { detailHeaders, detailRows, summaryHeaders, summaryRows } = buildAttendanceExportRows({
       records,
@@ -293,9 +293,14 @@ export default function Attendance() {
       detailSheet["!autofilter"] = { ref: `A1:${XLSX.utils.encode_col(detailHeaders.length - 1)}1` };
       summarySheet["!autofilter"] = { ref: `A1:${XLSX.utils.encode_col(summaryHeaders.length - 1)}1` };
 
-      XLSX.utils.book_append_sheet(workbook, detailSheet, "تفصيلي");
-      XLSX.utils.book_append_sheet(workbook, summarySheet, "ملخص");
-      XLSX.writeFile(workbook, `Attendance_${dateRange.start}_${dateRange.end}.xlsx`);
+      const buffer = await workbook.xlsx.writeBuffer();
+      const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `Attendance_${dateRange.start}_${dateRange.end}.xlsx`;
+      anchor.click();
+      URL.revokeObjectURL(url);
       toast({ title: "تم التصدير", description: "تم تحميل ملف الإكسل بنجاح" });
     } catch (error) {
       console.error("Export failed", error);
