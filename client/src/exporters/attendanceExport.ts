@@ -1,10 +1,53 @@
-import { format } from "date-fns";
 import type { AttendanceRecord, Employee } from "@shared/schema";
 import { parseTimeToSeconds } from "@/lib/datetime";
 import { normalizeEmployeeCode } from "@shared/employee-code";
 
 const dayNames = ["أحد", "اثنين", "ثلاثاء", "أربعاء", "خميس", "جمعة", "سبت"];
 
+export const DETAIL_HEADERS = [
+  "التاريخ",
+  "اليوم",
+  "الكود",
+  "اسم الموظف",
+  "القسم",
+  "تاريخ التعيين",
+  "تاريخ ترك العمل",
+  "فترة الالتحاق",
+  "فترة الترك",
+  "الدخول",
+  "الخروج",
+  "ساعات العمل",
+  "الإضافي",
+  "نوع اليوم",
+  "الحالة",
+  "تأخير",
+  "انصراف مبكر",
+  "سهو بصمة",
+  "غياب",
+  "إجمالي الجزاءات",
+  "ملاحظات",
+  "مدير الإدارة",
+] as const;
+
+export const SUMMARY_HEADERS = [
+  "الكود",
+  "اسم الموظف",
+  "القسم",
+  "تاريخ التعيين",
+  "تاريخ ترك العمل",
+  "فترة الالتحاق",
+  "فترة الترك",
+  "بدل يوم الجمع",
+  "بدل أيام الإجازات الرسمية",
+  "إجمالي أيام البدل",
+  "إجمالي التأخيرات",
+  "إجمالي الانصراف المبكر",
+  "إجمالي سهو البصمة",
+  "إجمالي الغياب",
+  "إجمالي الجزاءات",
+  "ملاحظات",
+  "مدير الإدارة",
+] as const;
 
 const toExcelDateSerial = (value: string) => {
   const [yearRaw, monthRaw, dayRaw] = value.split("-").map(Number);
@@ -23,7 +66,7 @@ const excelSerialToIsoDate = (serial: number): string => {
   return `${y}-${m}-${d}`;
 };
 
-const normalizeHireDate = (value: unknown): string => {
+const normalizeDateText = (value: unknown): string => {
   if (typeof value === "number") return excelSerialToIsoDate(value);
   const raw = String(value ?? "").trim();
   if (!raw) return "";
@@ -41,21 +84,16 @@ const normalizeHireDate = (value: unknown): string => {
   return "";
 };
 
-
-
 const parseIsoDateToUtcMs = (value: string): number | null => {
   const [y, m, d] = value.split("-").map(Number);
   if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) return null;
   return Date.UTC(y, m - 1, d);
 };
 
-export const calculateOnboardingDays = (hireDate: string, reportStartDate: string): number => {
-  if (!hireDate || !reportStartDate) return 0;
-  const hireMs = parseIsoDateToUtcMs(hireDate);
-  const startMs = parseIsoDateToUtcMs(reportStartDate);
-  if (hireMs === null || startMs === null) return 0;
-  if (hireMs <= startMs) return 0;
-  return Math.max(0, Math.floor((hireMs - startMs) / 86400000));
+const arabicDayName = (isoDate: string) => {
+  const ms = parseIsoDateToUtcMs(isoDate);
+  if (ms === null) return "";
+  return dayNames[new Date(ms).getUTCDay()] || "";
 };
 
 export const calculateTerminationPeriodDays = (terminationDate: string, reportEndDate: string): number => {
@@ -80,6 +118,36 @@ const toTimeText = (value: unknown) => {
   return text.slice(0, 8);
 };
 
+const cleanNotes = (value: string | null | undefined) => {
+  const note = String(value || "").replace(/[\r\n]+/g, " ").trim();
+  if (!note) return "";
+  if (/^Shift\s+\d{1,2}:\d{2}-\d{1,2}:\d{2}/i.test(note)) return "";
+  return note;
+};
+
+export const calculateOnboardingDays = (hireDate: string, reportStartDate: string, reportEndDate?: string): number => {
+  if (!hireDate || !reportStartDate) return 0;
+  const hireMs = parseIsoDateToUtcMs(hireDate);
+  const startMs = parseIsoDateToUtcMs(reportStartDate);
+  if (hireMs === null || startMs === null) return 0;
+  if (hireMs <= startMs) return 0;
+  const raw = Math.floor((hireMs - startMs) / 86400000);
+  if (!reportEndDate) return Math.max(0, raw);
+  const endMs = parseIsoDateToUtcMs(reportEndDate);
+  if (endMs === null || endMs < startMs) return Math.max(0, raw);
+  const rangeDays = Math.floor((endMs - startMs) / 86400000) + 1;
+  return Math.max(0, Math.min(raw, rangeDays));
+};
+
+export const calculateTerminationPeriodDays = (terminationDate: string, reportEndDate: string): number => {
+  if (!terminationDate || !reportEndDate) return 0;
+  const terminationMs = parseIsoDateToUtcMs(terminationDate);
+  const endMs = parseIsoDateToUtcMs(reportEndDate);
+  if (terminationMs === null || endMs === null) return 0;
+  if (terminationMs >= endMs) return 0;
+  return Math.max(0, Math.floor((endMs - terminationMs) / 86400000));
+};
+
 export type AttendanceExportResult = {
   detailHeaders: string[];
   detailRows: any[][];
@@ -87,34 +155,24 @@ export type AttendanceExportResult = {
   summaryRows: any[][];
 };
 
-export const SUMMARY_HEADERS = [
-  "الكود",
-  "اسم الموظف",
-  "القسم",
-  "تاريخ التعيين",
-  "تاريخ ترك العمل",
-  "فترة الالتحاق",
-  "إجمالي التأخيرات",
-  "إجمالي الانصراف المبكر",
-  "إجمالي سهو البصمة",
-  "إجمالي الغياب",
-  "إجمالي الجزاءات",
-  "فترة الترك",
-  "بدل يوم الجمع",
-  "بدل أيام الإجازات الرسمية",
-  "إجمالي أيام البدل",
-] as const;
+const mapRowsByHeaders = (headers: readonly string[], rows: Record<string, any>[]) => [
+  [...headers],
+  ...rows.map((row) => headers.map((header) => row[header] ?? "")),
+];
 
-export const summaryFormulaByRow = (rowNumber: number) => ({
-  G: `SUMIF(تفصيلي!$C:$C,$A${rowNumber},تفصيلي!$N:$N)`,
-  H: `SUMIF(تفصيلي!$C:$C,$A${rowNumber},تفصيلي!$O:$O)`,
-  I: `SUMIF(تفصيلي!$C:$C,$A${rowNumber},تفصيلي!$P:$P)`,
-  J: `SUMIF(تفصيلي!$C:$C,$A${rowNumber},تفصيلي!$Q:$Q)*2`,
-  K: `G${rowNumber}+H${rowNumber}+I${rowNumber}+J${rowNumber}`,
-  M: `COUNTIFS(تفصيلي!$C:$C,$A${rowNumber},تفصيلي!$L:$L,"جمعة",تفصيلي!$M:$M,"حضور")`,
-  N: `COUNTIFS(تفصيلي!$C:$C,$A${rowNumber},تفصيلي!$L:$L,"إجازة رسمية",تفصيلي!$M:$M,"حضور")`,
-  O: `M${rowNumber}+N${rowNumber}`,
-});
+const buildEmployeeMeta = (employee?: Employee) => {
+  const hireDate = normalizeDateText((employee as any)?.hireDate ?? (employee as any)?.hire_date ?? (employee as any)?.["تاريخ التعيين"]);
+  const terminationDate = normalizeDateText((employee as any)?.terminationDate ?? (employee as any)?.termination_date ?? (employee as any)?.["تاريخ ترك العمل"]);
+  return {
+    name: String(employee?.nameAr || "").trim() || "(غير موجود بالماستر)",
+    department: String((employee as any)?.section || (employee as any)?.department || "").trim() || "غير مسجل",
+    manager: String((employee as any)?.deptManager || (employee as any)?.directManager || "").trim(),
+    hireDate,
+    terminationDate,
+    hireDateSerial: hireDate ? toExcelDateSerial(hireDate) : "",
+    terminationDateSerial: terminationDate ? toExcelDateSerial(terminationDate) : "",
+  };
+};
 
 export const buildAttendanceExportRows = ({
   records,
@@ -127,317 +185,159 @@ export const buildAttendanceExportRows = ({
   reportStartDate?: string;
   reportEndDate?: string;
 }): AttendanceExportResult => {
-  const employeeMap = new Map(employees.map((emp) => [normalizeEmployeeCode(emp.code), emp.nameAr]));
-  const employeeMetaMap = new Map(employees.map((emp) => [normalizeEmployeeCode(emp.code), emp]));
-  const getHireDateSerialByCode = (code: string) => {
-    const employeeMeta = employeeMetaMap.get(normalizeEmployeeCode(code));
-    const hireDateText = normalizeHireDate(
-      (employeeMeta as any)?.hireDate ?? (employeeMeta as any)?.hire_date ?? (employeeMeta as any)?.["تاريخ التعيين"]
-    );
-    return hireDateText ? toExcelDateSerial(hireDateText) : "";
-  };
-  const getDepartmentByCode = (code: string) => {
-    const employeeMeta = employeeMetaMap.get(normalizeEmployeeCode(code));
-    const value = String((employeeMeta as any)?.section || (employeeMeta as any)?.department || "").trim();
-    return value || "غير مسجل";
-  };
-  const getTerminationDateSerialByCode = (code: string) => {
-    const employeeMeta = employeeMetaMap.get(normalizeEmployeeCode(code));
-    const terminationDateText = normalizeHireDate(
-      (employeeMeta as any)?.terminationDate ?? (employeeMeta as any)?.termination_date ?? (employeeMeta as any)?.["تاريخ ترك العمل"]
-    );
-    return terminationDateText ? toExcelDateSerial(terminationDateText) : "";
-  };
+  const employeeMetaMap = new Map(employees.map((emp) => [normalizeEmployeeCode(emp.code), buildEmployeeMeta(emp)]));
   const effectiveReportStartDate = reportStartDate || (records.map((r) => String(r.date || "")).filter(Boolean).sort()[0] || "");
   const effectiveReportEndDate = reportEndDate || (records.map((r) => String(r.date || "")).filter(Boolean).sort().at(-1) || "");
-  const getOnboardingDaysByCode = (code: string) => {
-    const employeeMeta = employeeMetaMap.get(normalizeEmployeeCode(code));
-    const hireDateText = normalizeHireDate(
-      (employeeMeta as any)?.hireDate ?? (employeeMeta as any)?.hire_date ?? (employeeMeta as any)?.["تاريخ التعيين"]
-    );
-    return calculateOnboardingDays(hireDateText, effectiveReportStartDate);
-  };
-  const getTerminationPeriodDaysByCode = (code: string) => {
-    const employeeMeta = employeeMetaMap.get(normalizeEmployeeCode(code));
-    const terminationDateText = normalizeHireDate(
-      (employeeMeta as any)?.terminationDate ?? (employeeMeta as any)?.termination_date ?? (employeeMeta as any)?.["تاريخ ترك العمل"]
-    );
-    return calculateTerminationPeriodDays(terminationDateText, effectiveReportEndDate);
-  };
 
-  const detailHeaders = [
-    "التاريخ",
-    "اليوم",
-    "الكود",
-    "اسم الموظف",
-    "القسم",
-    "تاريخ التعيين",
-    "تاريخ ترك العمل",
-    "فترة الالتحاق",
-    "فترة الترك",
-    "الدخول",
-    "الخروج",
-    "ساعات العمل",
-    "الإضافي",
-    "نوع اليوم",
-    "الحالة",
-    "تأخير",
-    "انصراف مبكر",
-    "سهو بصمة",
-    "غياب",
-    "إجمالي الجزاءات",
-    "ملاحظات",
-  ];
-
-  const detailRows: any[][] = [detailHeaders];
-
+  const detailObjects: Record<string, any>[] = [];
   const summaryByEmployee = new Map<string, {
     code: string;
     name: string;
-    workDays: number;
-    fridays: number;
-    fridayAttendance: number;
-    officialLeaves: number;
-    hrLeaves: number;
-    officialHolidayDays: number;
-    officialHolidayAttendance: number;
-    compDayCredits: number;
-    absenceDays: number;
-    excusedAbsenceDays: number;
-    leaveDeductionDays: number;
+    department: string;
+    manager: string;
+    hireDateSerial: string | number;
+    terminationDateSerial: string | number;
+    onboardingDays: number;
     terminationPeriodDays: number;
     compDaysFriday: number;
     compDaysOfficial: number;
-    compDaysTotal: number;
-    compDaysUsed: number;
-    lastPunchDate: string;
-    totalLate: number;
-    totalEarlyLeave: number;
-    totalMissingStamp: number;
-    totalAbsencePenalty: number;
-    totalPenalties: number;
+    late: number;
+    early: number;
+    missing: number;
+    absenceDays: number;
+    notes: string;
   }>();
 
   records.forEach((record) => {
-    const [yearRaw, monthRaw, dayRaw] = String(record.date || "").split("-").map(Number);
-    const year = Number.isFinite(yearRaw) ? yearRaw : 1970;
-    const monthIndex = Number.isFinite(monthRaw) ? monthRaw - 1 : 0;
-    const dayOfMonth = Number.isFinite(dayRaw) ? dayRaw : 1;
-    const dateObj = new Date(year, monthIndex, dayOfMonth);
-    const dayIndex = dateObj.getDay();
-    const excelDateSerial = (Date.UTC(year, monthIndex, dayOfMonth) - Date.UTC(1899, 11, 30)) / 86400000;
-    const isFriday = dayIndex === 5;
-    const attendedFriday = record.status === "Friday Attended";
-    const isCompDay = record.status === "Comp Day";
-    const isOfficialHoliday = Boolean(record.isOfficialHoliday);
-    const isOfficialLeave = isCompDay && record.notes === "Official Leave";
-    const isHrLeave = isCompDay && !isOfficialLeave;
-    const leaveDeductionDays = Number(record.leaveDeductionDays || 0);
-    const excusedAbsenceDays = Number(record.excusedAbsenceDays || 0);
-    const terminationPeriodDays = Number(record.terminationPeriodDays || 0);
-    const dayType = terminationPeriodDays > 0
-      ? "فترة ترك"
-      : leaveDeductionDays > 0
-      ? "إجازة بالخصم"
-      : excusedAbsenceDays > 0
-      ? "غياب بعذر"
-      : record.status === "Leave"
-      ? "إجازة"
-      : isFriday
-      ? "جمعة"
-      : isOfficialHoliday
-        ? "إجازة رسمية"
-        : isOfficialLeave
-        ? "إجازة رسمية"
-        : isHrLeave
-          ? "إجازة"
-          : "عمل";
-    const autoWorkedOnHoliday = Boolean(record.checkIn || record.checkOut)
-      || (typeof record.totalHours === "number" && record.totalHours > 0)
-      || Boolean(record.missionStart && record.missionEnd);
-    const workedOnHoliday = record.workedOnOfficialHoliday ?? autoWorkedOnHoliday;
-    const status = terminationPeriodDays > 0
-      ? "إجازة بالخصم (فترة ترك)"
-      : leaveDeductionDays > 0
-      ? "إجازة بالخصم"
-      : excusedAbsenceDays > 0
-      ? "غياب بعذر"
-      : isFriday
-      ? (attendedFriday ? "حضور" : "إجازة")
-      : record.status === "Late"
-        ? "تأخير"
-        : record.status === "Absent"
-          ? "غياب"
-          : record.status === "Leave" || isCompDay
-            ? "إجازة"
-            : "حضور";
+    const normalizedCode = normalizeEmployeeCode(record.employeeCode);
+    const employeeMeta = employeeMetaMap.get(normalizedCode) || buildEmployeeMeta();
+    const onboardingDays = calculateOnboardingDays(employeeMeta.hireDate, effectiveReportStartDate, effectiveReportEndDate);
+    const terminationPeriodDays = calculateTerminationPeriodDays(employeeMeta.terminationDate, effectiveReportEndDate);
 
-    let lateValue = 0;
-    let earlyLeaveValue = 0;
-    let missingStampValue = 0;
-    let absenceValue = 0;
-    let totalPenalties = 0;
-    const notesTokens: string[] = [];
     const penalties = Array.isArray(record.penalties) ? (record.penalties as any[]) : [];
-    const hasPenalties = penalties.length > 0;
+    const isJoiningPeriod = record.status === "Joining Period";
 
-    if (!isFriday && hasPenalties) {
+    let dayType = "عمل";
+    if (Number(record.terminationPeriodDays || 0) > 0 || record.status === "Termination Period") dayType = "فترة ترك";
+    else if (isJoiningPeriod) dayType = "فترة التحاق";
+    else if (record.leaveDeductionDays) dayType = "إجازة بالخصم";
+    else if (record.excusedAbsenceDays) dayType = "غياب بعذر";
+    else if (record.status === "Friday" || record.status === "Friday Attended") dayType = "جمعة";
+    else if (record.isOfficialHoliday) dayType = "إجازة رسمية";
+    else if (record.status === "Leave" || record.status === "Comp Day") dayType = "إجازة";
+
+    let statusAr = "حضور";
+    if (isJoiningPeriod) statusAr = "";
+    else if (record.status === "Absent") statusAr = "غياب";
+    else if (record.status === "Late") statusAr = "تأخير";
+    else if (record.status === "Leave" || record.status === "Comp Day" || record.status === "Friday") statusAr = "إجازة";
+    else if (record.status === "Leave Deduction") statusAr = "خصم";
+    else if (record.status === "Termination Period") statusAr = "";
+
+    const penaltiesByType = {
+      late: 0,
+      early: 0,
+      missing: 0,
+      absence: 0,
+    };
+    if (!isJoiningPeriod) {
       penalties.forEach((penalty: any) => {
-        const value = Number(penalty.value);
-        if (!Number.isFinite(value)) return;
-        if (penalty.type === "تأخير") {
-          lateValue = value;
-          notesTokens.push("تأخير");
-        } else if (penalty.type === "انصراف مبكر") {
-          earlyLeaveValue = value;
-          notesTokens.push("انصراف مبكر");
-        } else if (penalty.type === "سهو بصمة") {
-          missingStampValue = value;
-          notesTokens.push("سهو بصمة");
-        } else if (penalty.type === "غياب") {
-          absenceValue = value;
-          notesTokens.push("غياب");
-        }
+        const value = Number(penalty.value || 0);
+        if (penalty.type === "تأخير") penaltiesByType.late += value;
+        if (penalty.type === "انصراف مبكر") penaltiesByType.early += value;
+        if (penalty.type === "سهو بصمة") penaltiesByType.missing += value;
+        if (penalty.type === "غياب") penaltiesByType.absence += value;
       });
-      const computedPenaltySum =
-        lateValue + earlyLeaveValue + missingStampValue + absenceValue * 2;
-      totalPenalties = computedPenaltySum;
     }
 
-    if (record.notes?.includes("مبيت")) {
-      missingStampValue = 0;
-      earlyLeaveValue = 0;
-    }
+    const totalPenalties = isJoiningPeriod
+      ? 0
+      : penaltiesByType.late + penaltiesByType.early + penaltiesByType.missing + penaltiesByType.absence * 2 + Number(record.excusedAbsenceDays || 0);
 
-    totalPenalties += excusedAbsenceDays;
+    detailObjects.push({
+      "التاريخ": toExcelDateSerial(String(record.date || "")) || "",
+      "اليوم": arabicDayName(String(record.date || "")),
+      "الكود": record.employeeCode,
+      "اسم الموظف": employeeMeta.name,
+      "القسم": employeeMeta.department,
+      "تاريخ التعيين": employeeMeta.hireDateSerial,
+      "تاريخ ترك العمل": employeeMeta.terminationDateSerial,
+      "فترة الالتحاق": onboardingDays,
+      "فترة الترك": terminationPeriodDays,
+      "الدخول": isJoiningPeriod ? "" : (record.checkIn ? parseTimeToSeconds(toTimeText(record.checkIn)) / 86400 : ""),
+      "الخروج": isJoiningPeriod ? "" : (record.checkOut ? parseTimeToSeconds(toTimeText(record.checkOut)) / 86400 : ""),
+      "ساعات العمل": isJoiningPeriod ? 0 : Number(record.totalHours || 0),
+      "الإضافي": isJoiningPeriod ? 0 : Number(record.overtimeHours || 0),
+      "نوع اليوم": dayType,
+      "الحالة": statusAr,
+      "تأخير": isJoiningPeriod ? 0 : penaltiesByType.late,
+      "انصراف مبكر": isJoiningPeriod ? 0 : penaltiesByType.early,
+      "سهو بصمة": isJoiningPeriod ? 0 : penaltiesByType.missing,
+      "غياب": isJoiningPeriod ? 0 : penaltiesByType.absence,
+      "إجمالي الجزاءات": totalPenalties,
+      "ملاحظات": isJoiningPeriod ? "" : cleanNotes(record.notes),
+      "مدير الإدارة": employeeMeta.manager,
+    });
 
-    const notes = notesTokens.length > 0
-      ? Array.from(new Set(notesTokens)).join(" + ")
-      : (record.notes || "").replace(/[\r\n]+/g, " ").trim();
-
-    const detailRow = [
-      excelDateSerial,
-      dayNames[dayIndex],
-      record.employeeCode,
-      employeeMap.get(normalizeEmployeeCode(record.employeeCode)) || "(غير موجود بالماستر)",
-      getDepartmentByCode(record.employeeCode),
-      getHireDateSerialByCode(record.employeeCode),
-      getTerminationDateSerialByCode(record.employeeCode),
-      getOnboardingDaysByCode(record.employeeCode),
-      getTerminationPeriodDaysByCode(record.employeeCode),
-      record.checkIn ? parseTimeToSeconds(toTimeText(record.checkIn)) / 86400 : "",
-      record.checkOut ? parseTimeToSeconds(toTimeText(record.checkOut)) / 86400 : "",
-      typeof record.totalHours === "number" ? Number(record.totalHours.toFixed(2)) : 0,
-      typeof record.overtimeHours === "number" ? Number(record.overtimeHours.toFixed(2)) : 0,
-      dayType,
-      status,
-      lateValue,
-      earlyLeaveValue,
-      missingStampValue,
-      absenceValue,
-      totalPenalties,
-      notes,
-    ];
-
-    detailRows.push(detailRow);
-
-    const normalizedEmployeeCode = normalizeEmployeeCode(record.employeeCode);
-    const summary = summaryByEmployee.get(normalizedEmployeeCode) || {
+    const existing = summaryByEmployee.get(normalizedCode) || {
       code: record.employeeCode,
-      name: employeeMap.get(normalizedEmployeeCode) || "(غير موجود بالماستر)",
-      workDays: 0,
-      fridays: 0,
-      fridayAttendance: 0,
-      officialLeaves: 0,
-      hrLeaves: 0,
-      officialHolidayDays: 0,
-      officialHolidayAttendance: 0,
-      compDayCredits: 0,
-      absenceDays: 0,
-      excusedAbsenceDays: 0,
-      leaveDeductionDays: 0,
-      terminationPeriodDays: 0,
+      name: employeeMeta.name,
+      department: employeeMeta.department,
+      manager: employeeMeta.manager,
+      hireDateSerial: employeeMeta.hireDateSerial,
+      terminationDateSerial: employeeMeta.terminationDateSerial,
+      onboardingDays,
+      terminationPeriodDays,
       compDaysFriday: 0,
       compDaysOfficial: 0,
-      compDaysTotal: 0,
-      compDaysUsed: 0,
-      lastPunchDate: "",
-      totalLate: 0,
-      totalEarlyLeave: 0,
-      totalMissingStamp: 0,
-      totalAbsencePenalty: 0,
-      totalPenalties: 0,
+      late: 0,
+      early: 0,
+      missing: 0,
+      absenceDays: 0,
+      notes: "",
     };
 
-    if (dayType === "عمل") summary.workDays += 1;
-    if (dayType === "جمعة") summary.fridays += 1;
-    if (isFriday && attendedFriday) summary.fridayAttendance += 1;
-    if (isOfficialHoliday) summary.officialHolidayDays += 1;
-    if (isOfficialHoliday && workedOnHoliday) summary.officialHolidayAttendance += 1;
-    if (isOfficialHoliday && workedOnHoliday) summary.compDayCredits += 1;
-    if (dayType === "إجازة رسمية" && !isOfficialHoliday) summary.officialLeaves += 1;
-    if (dayType === "إجازة") summary.hrLeaves += 1;
-    if (!isFriday && record.status === "Absent") summary.absenceDays += 1;
-    if (excusedAbsenceDays > 0) summary.excusedAbsenceDays += excusedAbsenceDays;
-    if (leaveDeductionDays > 0) summary.leaveDeductionDays += leaveDeductionDays;
-    if (terminationPeriodDays > 0) summary.terminationPeriodDays += terminationPeriodDays;
-    summary.compDaysFriday += Number(record.compDaysFriday || 0);
-    summary.compDaysOfficial += Number(record.compDaysOfficial || 0);
-    summary.compDaysTotal += Number(record.compDaysTotal || 0);
-    summary.compDaysUsed += Number((record as any).compDaysUsed || 0);
-    if (record.checkIn || record.checkOut) {
-      const candidate = record.checkOut || record.checkIn;
-      if (candidate) {
-        const key = format(candidate, "yyyy-MM-dd");
-        if (!summary.lastPunchDate || key > summary.lastPunchDate) summary.lastPunchDate = key;
-      }
+    if (!isJoiningPeriod) {
+      existing.late += penaltiesByType.late;
+      existing.early += penaltiesByType.early;
+      existing.missing += penaltiesByType.missing;
+      if (record.status === "Absent") existing.absenceDays += 1;
     }
+    existing.compDaysFriday += Number(record.compDaysFriday || 0);
+    existing.compDaysOfficial += Number(record.compDaysOfficial || 0);
+    if (!existing.notes) existing.notes = cleanNotes(record.notes);
 
-    if (!isFriday && hasPenalties) {
-      penalties.forEach((penalty: any) => {
-        const value = Number(penalty.value);
-        if (!Number.isFinite(value)) return;
-        summary.totalPenalties += value;
-        if (penalty.type === "تأخير") summary.totalLate += value;
-        if (penalty.type === "انصراف مبكر") summary.totalEarlyLeave += value;
-        if (penalty.type === "سهو بصمة") summary.totalMissingStamp += value;
-        if (penalty.type === "غياب") summary.totalAbsencePenalty += value;
-      });
-    }
-
-    summaryByEmployee.set(normalizedEmployeeCode, summary);
+    summaryByEmployee.set(normalizedCode, existing);
   });
 
-  const summaryHeaders = [...SUMMARY_HEADERS];
-
-  const summaryRows: any[][] = [summaryHeaders];
-  Array.from(summaryByEmployee.values()).forEach((summary) => {
-    const terminationPeriodDays = getTerminationPeriodDaysByCode(summary.code);
-    const summaryAbsenceTotal =
-      summary.absenceDays * 2 +
-      summary.excusedAbsenceDays +
-      summary.leaveDeductionDays +
-      terminationPeriodDays;
-    const summaryPenaltiesTotal = summary.totalLate + summary.totalEarlyLeave + summary.totalMissingStamp + summaryAbsenceTotal;
-    const compEarned = summary.compDaysFriday + summary.compDaysOfficial;
-    summaryRows.push([
-      summary.code,
-      summary.name,
-      getDepartmentByCode(summary.code),
-      getHireDateSerialByCode(summary.code),
-      getTerminationDateSerialByCode(summary.code),
-      getOnboardingDaysByCode(summary.code),
-      summary.totalLate,
-      summary.totalEarlyLeave,
-      summary.totalMissingStamp,
-      summaryAbsenceTotal,
-      summaryPenaltiesTotal,
-      terminationPeriodDays,
-      summary.compDaysFriday,
-      summary.compDaysOfficial,
-      compEarned,
-    ]);
+  const summaryObjects = Array.from(summaryByEmployee.values()).map((summary) => {
+    const weightedAbsence = summary.absenceDays * 2;
+    const totalPenalties = summary.late + summary.early + summary.missing + (weightedAbsence * 2);
+    return {
+      "الكود": summary.code,
+      "اسم الموظف": summary.name,
+      "القسم": summary.department,
+      "تاريخ التعيين": summary.hireDateSerial,
+      "تاريخ ترك العمل": summary.terminationDateSerial,
+      "فترة الالتحاق": summary.onboardingDays,
+      "فترة الترك": summary.terminationPeriodDays,
+      "بدل يوم الجمع": summary.compDaysFriday,
+      "بدل أيام الإجازات الرسمية": summary.compDaysOfficial,
+      "إجمالي أيام البدل": summary.compDaysFriday + summary.compDaysOfficial,
+      "إجمالي التأخيرات": summary.late,
+      "إجمالي الانصراف المبكر": summary.early,
+      "إجمالي سهو البصمة": summary.missing,
+      "إجمالي الغياب": weightedAbsence,
+      "إجمالي الجزاءات": totalPenalties,
+      "ملاحظات": summary.notes,
+      "مدير الإدارة": summary.manager,
+    };
   });
 
-  return { detailHeaders, detailRows, summaryHeaders, summaryRows };
+  return {
+    detailHeaders: [...DETAIL_HEADERS],
+    detailRows: mapRowsByHeaders(DETAIL_HEADERS, detailObjects),
+    summaryHeaders: [...SUMMARY_HEADERS],
+    summaryRows: mapRowsByHeaders(SUMMARY_HEADERS, summaryObjects),
+  };
 };

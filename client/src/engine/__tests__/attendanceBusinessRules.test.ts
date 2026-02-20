@@ -57,7 +57,7 @@ describe("attendance business rules", () => {
     expect(records[0].penalties?.length).toBeGreaterThan(0);
 
     const { summaryRows } = buildAttendanceExportRows({ records, employees: [baseEmployee] });
-    expect(summaryRows[1][8]).toBe(2); // weighted absence total
+    expect(summaryRows[1][13]).toBe(2); // weighted absence total
   });
 
   it("marks غياب بعذر with weight 1 and no penalties", () => {
@@ -76,7 +76,7 @@ describe("attendance business rules", () => {
     expect(records[0].penalties?.length).toBe(0);
 
     const { summaryRows } = buildAttendanceExportRows({ records, employees: [baseEmployee] });
-    expect(summaryRows[1][8]).toBe(1); // weighted absence total with excuse
+    expect(summaryRows[1][13]).toBe(0); // excused absence not counted as weighted غياب
   });
 
   it("marks إجازة بالخصم with deduction and no penalties", () => {
@@ -126,6 +126,54 @@ describe("attendance business rules", () => {
     expect(records[1].status).toBe("Termination Period");
     expect(records[1].terminationPeriodDays).toBe(1);
     expect(records[1].leaveDeductionDays).toBe(1);
+  });
+
+
+  it("marks days before hire date as joining period without absence penalties", () => {
+    const employee = { ...baseEmployee, hireDate: "2024-02-06" };
+    const records = processAttendanceRecords({
+      employees: [employee],
+      punches: [],
+      rules: [],
+      leaves: [],
+      officialHolidays: [],
+      adjustments: [],
+      startDate: "2024-01-23",
+      endDate: "2024-02-09",
+    });
+
+    const preHire = records.find((row) => row.date === "2024-02-05");
+    expect(preHire?.status).toBe("Joining Period");
+    expect(preHire?.penalties).toEqual([]);
+
+    const { summaryRows, summaryHeaders } = buildAttendanceExportRows({
+      records,
+      employees: [employee],
+      reportStartDate: "2024-01-23",
+      reportEndDate: "2024-02-09",
+    });
+    const postHireOnly = processAttendanceRecords({
+      employees: [employee],
+      punches: [],
+      rules: [],
+      leaves: [],
+      officialHolidays: [],
+      adjustments: [],
+      startDate: "2024-02-06",
+      endDate: "2024-02-09",
+    });
+    const postHireSummary = buildAttendanceExportRows({
+      records: postHireOnly,
+      employees: [employee],
+      reportStartDate: "2024-02-06",
+      reportEndDate: "2024-02-09",
+    });
+
+    const col = Object.fromEntries(summaryHeaders.map((h, i) => [h, i])) as Record<string, number>;
+    const postCol = Object.fromEntries(postHireSummary.summaryHeaders.map((h, i) => [h, i])) as Record<string, number>;
+    expect(summaryRows[1][col["فترة الالتحاق"]]).toBe(14);
+    expect(summaryRows[1][col["إجمالي الغياب"]]).toBe(postHireSummary.summaryRows[1][postCol["إجمالي الغياب"]]);
+    expect(summaryRows[1][col["إجمالي الجزاءات"]]).toBe(postHireSummary.summaryRows[1][postCol["إجمالي الجزاءات"]]);
   });
 
   it("counts comp days for Friday and official holidays when worked", () => {
