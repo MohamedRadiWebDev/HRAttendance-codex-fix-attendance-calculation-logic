@@ -21,6 +21,7 @@ import { buildAttendanceExportRows } from "@/exporters/attendanceExport";
 import { useAttendanceStore } from "@/store/attendanceStore";
 import { useEffectsStore } from "@/store/effectsStore";
 import { resolveShiftForDate, timeStringToSeconds } from "@/engine/attendanceEngine";
+import * as XLSX from 'xlsx';
 
 export default function Attendance() {
   const [location, setLocation] = useLocation();
@@ -283,155 +284,14 @@ export default function Attendance() {
     }
 
     try {
-      const ExcelJSImport = await import(/* @vite-ignore */ "https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js");
-      const ExcelJS = (ExcelJSImport as any).default || ExcelJSImport;
-      const workbook = new ExcelJS.Workbook();
-      const detailSheet = workbook.addWorksheet("تفصيلي", {
-        views: [{ state: "frozen", xSplit: 4, ySplit: 1, rightToLeft: true }],
-      });
-      const summarySheet = workbook.addWorksheet("ملخص", {
-        views: [{ state: "frozen", xSplit: 2, ySplit: 1, rightToLeft: true }],
-      });
+      const workbook = XLSX.utils.book_new();
+      const detailSheet = XLSX.utils.aoa_to_sheet(detailRows);
+      const summarySheet = XLSX.utils.aoa_to_sheet(summaryRows);
 
-      const thinBorder = {
-        top: { style: "thin", color: { argb: "FFD1D5DB" } },
-        bottom: { style: "thin", color: { argb: "FFD1D5DB" } },
-        left: { style: "thin", color: { argb: "FFD1D5DB" } },
-        right: { style: "thin", color: { argb: "FFD1D5DB" } },
-      } as const;
-      const buildColumnWidths = (headers: string[]) => headers.map((header) => {
-        if (header.includes("الكود")) return 10;
-        if (header.includes("اسم الموظف")) return 28;
-        if (header.includes("ملاحظات")) return 40;
-        if (header.includes("مدير الإدارة")) return 26;
-        if (header.includes("التاريخ") || header.includes("اليوم") || header.includes("فترة")) return 12;
-        if (header.includes("الدخول") || header.includes("الخروج")) return 10;
-        return 14;
-      });
-      const writeSheet = (sheet: any, rows: any[][], headers: string[]) => {
-        rows.forEach((row) => sheet.addRow(row));
-        sheet.columns = headers.map((header, i) => ({ header, key: header, width: buildColumnWidths(headers)[i] }));
-        const headerRow = sheet.getRow(1);
-        headerRow.eachCell((cell: any) => {
-          cell.font = { bold: true };
-          cell.alignment = { horizontal: "center", vertical: "middle" };
-          cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE5E7EB" } };
-          cell.border = thinBorder;
-        });
-
-        for (let rowIndex = 2; rowIndex <= rows.length; rowIndex += 1) {
-          const excelRow = sheet.getRow(rowIndex);
-          const zebra = rowIndex % 2 === 0 ? "FFF3F4F6" : "FFFFFFFF";
-          excelRow.eachCell((cell: any) => {
-            cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: zebra } };
-            cell.border = thinBorder;
-            cell.alignment = { horizontal: "right", vertical: "middle" };
-          });
-        }
-
-        sheet.autoFilter = {
-          from: { row: 1, column: 1 },
-          to: { row: 1, column: headers.length },
-        };
-      };
-
-      writeSheet(detailSheet, detailRows, detailHeaders);
-      writeSheet(summarySheet, summaryRows, summaryHeaders);
-
-      const detailIndex = Object.fromEntries(detailHeaders.map((h, i) => [h, i + 1])) as Record<string, number>;
-      const summaryIndex = Object.fromEntries(summaryHeaders.map((h, i) => [h, i + 1])) as Record<string, number>;
-
-      const setDateFormat = (sheet: any, col: number, rowCount: number) => {
-        for (let r = 2; r <= rowCount; r += 1) {
-          const cell = sheet.getCell(r, col);
-          if (typeof cell.value === "number" && cell.value > 0) cell.numFmt = "yyyy-mm-dd";
-        }
-      };
-      const setNumFormat = (sheet: any, col: number, rowCount: number, fmt = "0.00", intOnly = false) => {
-        for (let r = 2; r <= rowCount; r += 1) {
-          const cell = sheet.getCell(r, col);
-          cell.value = Number(cell.value || 0);
-          cell.numFmt = intOnly ? "0" : fmt;
-        }
-      };
-      const setTimeFormat = (sheet: any, col: number, rowCount: number) => {
-        for (let r = 2; r <= rowCount; r += 1) {
-          const cell = sheet.getCell(r, col);
-          if (typeof cell.value === "number" && cell.value > 0) cell.numFmt = "hh:mm";
-        }
-      };
-
-      ["التاريخ", "تاريخ التعيين", "تاريخ ترك العمل"].forEach((header) => setDateFormat(detailSheet, detailIndex[header], detailRows.length));
-      ["فترة الالتحاق", "فترة الترك"].forEach((header) => setNumFormat(detailSheet, detailIndex[header], detailRows.length, "0", true));
-      ["الدخول", "الخروج"].forEach((header) => setTimeFormat(detailSheet, detailIndex[header], detailRows.length));
-      ["ساعات العمل", "الإضافي", "تأخير", "انصراف مبكر", "سهو بصمة", "غياب", "إجمالي الجزاءات"].forEach((header) => setNumFormat(detailSheet, detailIndex[header], detailRows.length));
-
-      ["تاريخ التعيين", "تاريخ ترك العمل"].forEach((header) => setDateFormat(summarySheet, summaryIndex[header], summaryRows.length));
-      ["فترة الالتحاق", "فترة الترك", "بدل يوم الجمع", "بدل أيام الإجازات الرسمية", "إجمالي أيام البدل", "إجمالي التأخيرات", "إجمالي الانصراف المبكر", "إجمالي سهو البصمة", "إجمالي الغياب", "إجمالي الجزاءات"].forEach((header) => setNumFormat(summarySheet, summaryIndex[header], summaryRows.length));
-
-      for (let r = 2; r <= detailRows.length; r += 1) {
-        const status = String(detailSheet.getCell(r, detailIndex["الحالة"]).value || "");
-        const dayType = String(detailSheet.getCell(r, detailIndex["نوع اليوم"]).value || "");
-        const penalties = Number(detailSheet.getCell(r, detailIndex["إجمالي الجزاءات"]).value || 0);
-        if (status === "غياب" || dayType === "جمعة" || dayType === "إجازة رسمية") {
-          const fill = status === "غياب" ? "FFFEE2E2" : "FFF3F4F6";
-          detailSheet.getRow(r).eachCell((cell: any) => {
-            cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: fill } };
-          });
-        }
-        if (penalties > 0) {
-          detailSheet.getCell(r, detailIndex["إجمالي الجزاءات"]).fill = {
-            type: "pattern",
-            pattern: "solid",
-            fgColor: { argb: "FFFED7AA" },
-          };
-        }
-
-        ["تاريخ التعيين", "تاريخ ترك العمل"].forEach((header) => {
-          const dateCell = summarySheet[XLSX.utils.encode_cell({ r: rowIndex, c: summaryIndex[header] })];
-          if (dateCell && Number(dateCell.v) > 0) {
-            dateCell.t = "n";
-            dateCell.z = "yyyy-mm-dd";
-          }
-        });
-
-        ["فترة الالتحاق", "فترة الترك", "بدل يوم الجمع", "بدل أيام الإجازات الرسمية", "إجمالي أيام البدل", "إجمالي التأخيرات", "إجمالي الانصراف المبكر", "إجمالي سهو البصمة", "إجمالي الغياب", "إجمالي الجزاءات"].forEach((header) => {
-          const cell = summarySheet[XLSX.utils.encode_cell({ r: rowIndex, c: summaryIndex[header] })];
-          if (cell) {
-            cell.t = "n";
-            cell.v = Number(cell.v || 0);
-            cell.z = "0.00";
-          }
-        });
-      }
-
-      const dayTypeCol = detailIndex["نوع اليوم"];
-      const statusCol = detailIndex["الحالة"];
-      for (let r = 2; r <= Math.max(detailRows.length, 2); r += 1) {
-        detailSheet.getCell(r, dayTypeCol).dataValidation = {
-          type: "list",
-          allowBlank: true,
-          formulae: ['"عمل,جمعة,إجازة رسمية,إجازة تحصيل,فترة التحاق,فترة ترك"'],
-        };
-        detailSheet.getCell(r, statusCol).dataValidation = {
-          type: "list",
-          allowBlank: true,
-          formulae: ['"حضور,تأخير,غياب,إجازة,خصم,"'],
-        };
-      }
-
-      const detailFirstRowByCode = new Map<string, number>();
-      for (let rowIndex = 2; rowIndex <= detailRows.length; rowIndex += 1) {
-        const code = String(detailSheet.getCell(rowIndex, detailIndex["الكود"]).value || "");
-        if (code && !detailFirstRowByCode.has(code)) detailFirstRowByCode.set(code, rowIndex);
-      }
-      for (let rowIndex = 2; rowIndex <= summaryRows.length; rowIndex += 1) {
-        const code = String(summarySheet.getCell(rowIndex, summaryIndex["الكود"]).value || "");
-        const target = detailFirstRowByCode.get(code);
-        if (!target) continue;
-        const cell = summarySheet.getCell(rowIndex, summaryIndex["اسم الموظف"]);
-        cell.value = { text: String(cell.value || ""), hyperlink: `#'تفصيلي'!A${target}` };
-      }
+      detailSheet["!freeze"] = { xSplit: 4, ySplit: 1 };
+      summarySheet["!freeze"] = { xSplit: 2, ySplit: 1 };
+      detailSheet["!autofilter"] = { ref: `A1:${XLSX.utils.encode_col(detailHeaders.length - 1)}1` };
+      summarySheet["!autofilter"] = { ref: `A1:${XLSX.utils.encode_col(summaryHeaders.length - 1)}1` };
 
       const buffer = await workbook.xlsx.writeBuffer();
       const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
@@ -442,7 +302,8 @@ export default function Attendance() {
       anchor.click();
       URL.revokeObjectURL(url);
       toast({ title: "تم التصدير", description: "تم تحميل ملف الإكسل بنجاح" });
-    } catch {
+    } catch (error) {
+      console.error("Export failed", error);
       toast({
         title: "تعذر تصدير التقرير",
         description: "حدث خطأ أثناء إنشاء ملف التقرير. حاول مرة أخرى.",
