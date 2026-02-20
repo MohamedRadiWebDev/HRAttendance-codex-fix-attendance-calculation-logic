@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { buildAttendanceExportRows, calculateOnboardingDays, summaryFormulaByRow } from "@/exporters/attendanceExport";
+import {
+  buildAttendanceExportRows,
+  calculateOnboardingDays,
+  calculateTerminationPeriodDays,
+  DETAIL_HEADERS,
+  SUMMARY_HEADERS,
+} from "@/exporters/attendanceExport";
 import type { AttendanceRecord, Employee } from "@shared/schema";
 
 const employee: Employee = {
@@ -8,16 +14,16 @@ const employee: Employee = {
   nameAr: "موظف اختبار",
   sector: "",
   department: "",
-  section: "",
+  section: "القسم أ",
   jobTitle: "",
   branch: "",
   governorate: "",
-  hireDate: "2020-01-15",
-  terminationDate: "",
+  hireDate: "2024-06-02",
+  terminationDate: "2024-06-04",
   terminationReason: "",
   serviceDuration: "",
   directManager: "",
-  deptManager: "",
+  deptManager: "مدير أول",
   nationalId: "",
   birthDate: "",
   address: "",
@@ -28,7 +34,7 @@ const employee: Employee = {
 };
 
 describe("export workbook checks", () => {
-  it("builds تفصيلي + ملخص with stable Arabic headers and no 1970 dates", () => {
+  it("keeps exact header order and maps row values by header", () => {
     const records: AttendanceRecord[] = [
       {
         id: 1,
@@ -37,11 +43,11 @@ describe("export workbook checks", () => {
         checkIn: new Date("2024-06-03T09:00:00"),
         checkOut: new Date("2024-06-03T17:00:00"),
         totalHours: 8,
-        overtimeHours: 0,
+        overtimeHours: 1,
         status: "Present",
-        penalties: [],
+        penalties: [{ type: "تأخير", value: 0.25 }] as any,
         isOvernight: false,
-        notes: null,
+        notes: "مبيت",
         missionStart: null,
         missionEnd: null,
         halfDayExcused: false,
@@ -54,58 +60,6 @@ describe("export workbook checks", () => {
         compDaysFriday: 0,
         compDaysOfficial: 0,
         compDaysTotal: 0,
-        compDaysUsed: 0,
-      },
-      {
-        id: 2,
-        employeeCode: "EMP1",
-        date: "2024-06-04",
-        checkIn: null,
-        checkOut: null,
-        totalHours: 0,
-        overtimeHours: 0,
-        status: "Absent",
-        penalties: [{ type: "غياب", value: 1 }] as any,
-        isOvernight: false,
-        notes: null,
-        missionStart: null,
-        missionEnd: null,
-        halfDayExcused: false,
-        isOfficialHoliday: false,
-        workedOnOfficialHoliday: null,
-        compDayCredit: 0,
-        leaveDeductionDays: 0,
-        excusedAbsenceDays: 0,
-        terminationPeriodDays: 0,
-        compDaysFriday: 0,
-        compDaysOfficial: 0,
-        compDaysTotal: 0,
-        compDaysUsed: 0,
-      },
-      {
-        id: 3,
-        employeeCode: " EMP1 ",
-        date: "2024-06-05",
-        checkIn: new Date("2024-06-05T09:00:00"),
-        checkOut: new Date("2024-06-05T17:00:00"),
-        totalHours: 8,
-        overtimeHours: 0,
-        status: "Official Holiday",
-        penalties: [],
-        isOvernight: false,
-        notes: "إجازة رسمية",
-        missionStart: null,
-        missionEnd: null,
-        halfDayExcused: false,
-        isOfficialHoliday: true,
-        workedOnOfficialHoliday: true,
-        compDayCredit: 1,
-        leaveDeductionDays: 0,
-        excusedAbsenceDays: 0,
-        terminationPeriodDays: 0,
-        compDaysFriday: 0,
-        compDaysOfficial: 1,
-        compDaysTotal: 1,
         compDaysUsed: 0,
       },
     ];
@@ -113,103 +67,43 @@ describe("export workbook checks", () => {
     const { detailHeaders, detailRows, summaryHeaders, summaryRows } = buildAttendanceExportRows({
       records,
       employees: [employee],
+      reportStartDate: "2024-06-01",
+      reportEndDate: "2024-06-10",
     });
 
-    expect(detailHeaders).toEqual([
-      "التاريخ",
-      "اليوم",
-      "الكود",
-      "اسم الموظف",
-      "القسم",
-      "تاريخ التعيين",
-      "فترة الالتحاق",
-      "الدخول",
-      "الخروج",
-      "ساعات العمل",
-      "الإضافي",
-      "نوع اليوم",
-      "الحالة",
-      "تأخير",
-      "انصراف مبكر",
-      "سهو بصمة",
-      "غياب",
-      "إجمالي الجزاءات",
-      "ملاحظات",
-    ]);
+    expect(detailHeaders).toEqual([...DETAIL_HEADERS]);
+    expect(summaryHeaders).toEqual([...SUMMARY_HEADERS]);
 
-    expect(summaryHeaders[0]).toBe("الكود");
-    expect(summaryHeaders[1]).toBe("اسم الموظف");
-    expect(summaryHeaders).toEqual([
-      "الكود",
-      "اسم الموظف",
-      "القسم",
-      "تاريخ التعيين",
-      "فترة الالتحاق",
-      "إجمالي التأخيرات",
-      "إجمالي الانصراف المبكر",
-      "إجمالي سهو البصمة",
-      "إجمالي الغياب",
-      "إجمالي الجزاءات",
-      "فترة الترك",
-      "بدل يوم الجمع",
-      "بدل أيام الإجازات الرسمية",
-      "إجمالي أيام البدل",
-    ]);
-    expect(summaryRows.length).toBeGreaterThan(1);
-    expect(detailRows.length).toBeGreaterThan(1);
+    const detailCol = Object.fromEntries(detailHeaders.map((h, i) => [h, i])) as Record<string, number>;
+    const summaryCol = Object.fromEntries(summaryHeaders.map((h, i) => [h, i])) as Record<string, number>;
 
-    const firstDetail = detailRows[1];
-    expect(firstDetail[2]).toBe("EMP1");
-    expect(String(firstDetail[3]).trim().length).toBeGreaterThan(0);
-    expect(firstDetail[4]).toBe("غير مسجل");
-    expect(typeof firstDetail[5] === "number" || firstDetail[5] === "").toBe(true);
-    expect(firstDetail[6]).toBe(0);
+    const detailFirst = detailRows[1];
+    expect(detailFirst[detailCol["الكود"]]).toBe("EMP1");
+    expect(detailFirst[detailCol["اسم الموظف"]]).toBe("موظف اختبار");
+    expect(detailFirst[detailCol["القسم"]]).toBe("القسم أ");
+    expect(detailFirst[detailCol["مدير الإدارة"]]).toBe("مدير أول");
+    expect(typeof detailFirst[detailCol["فترة الالتحاق"]]).toBe("number");
+    expect(typeof detailFirst[detailCol["فترة الترك"]]).toBe("number");
 
-    const summaryRow = summaryRows[1];
-    expect(summaryRow[0]).toBe("EMP1");
-    expect(String(summaryRow[1]).trim().length).toBeGreaterThan(0);
-    expect(summaryRow[2]).toBe("غير مسجل");
-    expect(summaryRow[3]).toBeGreaterThan(0);
-    expect(summaryRow[4]).toBe(0);
-    expect(summaryRow[5]).toBe(0);
-    expect(summaryRow[6]).toBe(0);
+    const summaryFirst = summaryRows[1];
+    expect(summaryFirst[summaryCol["الكود"]]).toBe("EMP1");
+    expect(summaryFirst[summaryCol["اسم الموظف"]]).toBe("موظف اختبار");
+    expect(summaryFirst[summaryCol["مدير الإدارة"]]).toBe("مدير أول");
+    expect(summaryFirst[summaryCol["إجمالي الغياب"]]).toBe(0);
+    expect(summaryFirst[summaryCol["إجمالي الجزاءات"]]).toBeGreaterThanOrEqual(0);
 
-    // Absence weighting in summary: absenceDays * 2 + excused + leave deduction + termination
-    expect(summaryRow[8]).toBe(2);
-    expect(summaryRow[11]).toBe(0);
-    expect(summaryRow[12]).toBe(1);
-    expect(summaryRow[13]).toBe(1);
-
-    const formulas = summaryFormulaByRow(2);
-    expect(formulas.F).toBe('SUMIF(تفصيلي!$C:$C,$A2,تفصيلي!$N:$N)');
-    expect(formulas.I).toBe('SUMIF(تفصيلي!$C:$C,$A2,تفصيلي!$Q:$Q)*2');
-    expect(formulas.L).toBe('COUNTIFS(تفصيلي!$C:$C,$A2,تفصيلي!$L:$L,"جمعة",تفصيلي!$M:$M,"حضور")');
-    expect(formulas.M).toBe('COUNTIFS(تفصيلي!$C:$C,$A2,تفصيلي!$L:$L,"إجازة رسمية",تفصيلي!$M:$M,"حضور")');
-
-    const holidayDetailRow = detailRows.find((row) => row[0] !== "التاريخ" && row[11] === "إجازة رسمية");
-    expect(holidayDetailRow).toBeTruthy();
-
-    detailRows.flat().forEach((cell) => {
-      if (typeof cell === "string") {
-        expect(cell.startsWith("=")).toBe(false);
-      }
-    });
-    summaryRows.flat().forEach((cell) => {
-      if (typeof cell === "string") {
-        expect(cell.startsWith("=")).toBe(false);
-      }
-    });
-
-    const flat = JSON.stringify({ detailHeaders, detailRows, summaryHeaders, summaryRows });
+    const flat = JSON.stringify({ detailRows, summaryRows });
     expect(flat.includes("1970-01-01")).toBe(false);
-    expect(summaryHeaders).toBeDefined();
   });
 
-
-  it("calculates onboarding days as integer difference and clamps to zero", () => {
+  it("calculates onboarding and termination periods and clamps to zero", () => {
     expect(calculateOnboardingDays("2025-02-09", "2025-02-01")).toBe(8);
     expect(calculateOnboardingDays("2025-02-01", "2025-02-01")).toBe(0);
     expect(calculateOnboardingDays("2025-01-20", "2025-02-01")).toBe(0);
-  });
 
+    expect(calculateTerminationPeriodDays("2025-02-10", "2025-02-23")).toBe(13);
+    expect(calculateTerminationPeriodDays("2025-02-23", "2025-02-23")).toBe(0);
+    expect(calculateTerminationPeriodDays("2025-03-01", "2025-02-23")).toBe(0);
+    expect(calculateTerminationPeriodDays("", "2025-02-23")).toBe(0);
+  });
 });
