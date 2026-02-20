@@ -12,7 +12,19 @@ const toExcelDateSerial = (value: string) => {
   return (Date.UTC(yearRaw, monthRaw - 1, dayRaw) - Date.UTC(1899, 11, 30)) / 86400000;
 };
 
+const excelSerialToIsoDate = (serial: number): string => {
+  if (!Number.isFinite(serial)) return "";
+  const wholeDays = Math.floor(serial);
+  const ms = wholeDays * 86400000;
+  const date = new Date(Date.UTC(1899, 11, 30) + ms);
+  const y = date.getUTCFullYear();
+  const m = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const d = String(date.getUTCDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+};
+
 const normalizeHireDate = (value: unknown): string => {
+  if (typeof value === "number") return excelSerialToIsoDate(value);
   const raw = String(value ?? "").trim();
   if (!raw) return "";
   const normalized = raw.replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d))).replace(/\./g, "/");
@@ -46,6 +58,15 @@ export const calculateOnboardingDays = (hireDate: string, reportStartDate: strin
   return Math.max(0, Math.floor((hireMs - startMs) / 86400000));
 };
 
+export const calculateTerminationPeriodDays = (terminationDate: string, reportEndDate: string): number => {
+  if (!terminationDate || !reportEndDate) return 0;
+  const terminationMs = parseIsoDateToUtcMs(terminationDate);
+  const endMs = parseIsoDateToUtcMs(reportEndDate);
+  if (terminationMs === null || endMs === null) return 0;
+  if (terminationMs >= endMs) return 0;
+  return Math.max(0, Math.floor((endMs - terminationMs) / 86400000));
+};
+
 const toTimeText = (value: unknown) => {
   if (!value) return "";
   if (value instanceof Date) {
@@ -71,6 +92,7 @@ export const SUMMARY_HEADERS = [
   "اسم الموظف",
   "القسم",
   "تاريخ التعيين",
+  "تاريخ ترك العمل",
   "فترة الالتحاق",
   "إجمالي التأخيرات",
   "إجمالي الانصراف المبكر",
@@ -84,24 +106,26 @@ export const SUMMARY_HEADERS = [
 ] as const;
 
 export const summaryFormulaByRow = (rowNumber: number) => ({
-  F: `SUMIF(تفصيلي!$C:$C,$A${rowNumber},تفصيلي!$N:$N)`,
-  G: `SUMIF(تفصيلي!$C:$C,$A${rowNumber},تفصيلي!$O:$O)`,
-  H: `SUMIF(تفصيلي!$C:$C,$A${rowNumber},تفصيلي!$P:$P)`,
-  I: `SUMIF(تفصيلي!$C:$C,$A${rowNumber},تفصيلي!$Q:$Q)*2`,
-  J: `F${rowNumber}+G${rowNumber}+H${rowNumber}+I${rowNumber}`,
-  L: `COUNTIFS(تفصيلي!$C:$C,$A${rowNumber},تفصيلي!$L:$L,"جمعة",تفصيلي!$M:$M,"حضور")`,
-  M: `COUNTIFS(تفصيلي!$C:$C,$A${rowNumber},تفصيلي!$L:$L,"إجازة رسمية",تفصيلي!$M:$M,"حضور")`,
-  N: `L${rowNumber}+M${rowNumber}`,
+  G: `SUMIF(تفصيلي!$C:$C,$A${rowNumber},تفصيلي!$N:$N)`,
+  H: `SUMIF(تفصيلي!$C:$C,$A${rowNumber},تفصيلي!$O:$O)`,
+  I: `SUMIF(تفصيلي!$C:$C,$A${rowNumber},تفصيلي!$P:$P)`,
+  J: `SUMIF(تفصيلي!$C:$C,$A${rowNumber},تفصيلي!$Q:$Q)*2`,
+  K: `G${rowNumber}+H${rowNumber}+I${rowNumber}+J${rowNumber}`,
+  M: `COUNTIFS(تفصيلي!$C:$C,$A${rowNumber},تفصيلي!$L:$L,"جمعة",تفصيلي!$M:$M,"حضور")`,
+  N: `COUNTIFS(تفصيلي!$C:$C,$A${rowNumber},تفصيلي!$L:$L,"إجازة رسمية",تفصيلي!$M:$M,"حضور")`,
+  O: `M${rowNumber}+N${rowNumber}`,
 });
 
 export const buildAttendanceExportRows = ({
   records,
   employees,
   reportStartDate,
+  reportEndDate,
 }: {
   records: AttendanceRecord[];
   employees: Employee[];
   reportStartDate?: string;
+  reportEndDate?: string;
 }): AttendanceExportResult => {
   const employeeMap = new Map(employees.map((emp) => [normalizeEmployeeCode(emp.code), emp.nameAr]));
   const employeeMetaMap = new Map(employees.map((emp) => [normalizeEmployeeCode(emp.code), emp]));
@@ -117,13 +141,28 @@ export const buildAttendanceExportRows = ({
     const value = String((employeeMeta as any)?.section || (employeeMeta as any)?.department || "").trim();
     return value || "غير مسجل";
   };
+  const getTerminationDateSerialByCode = (code: string) => {
+    const employeeMeta = employeeMetaMap.get(normalizeEmployeeCode(code));
+    const terminationDateText = normalizeHireDate(
+      (employeeMeta as any)?.terminationDate ?? (employeeMeta as any)?.termination_date ?? (employeeMeta as any)?.["تاريخ ترك العمل"]
+    );
+    return terminationDateText ? toExcelDateSerial(terminationDateText) : "";
+  };
   const effectiveReportStartDate = reportStartDate || (records.map((r) => String(r.date || "")).filter(Boolean).sort()[0] || "");
+  const effectiveReportEndDate = reportEndDate || (records.map((r) => String(r.date || "")).filter(Boolean).sort().at(-1) || "");
   const getOnboardingDaysByCode = (code: string) => {
     const employeeMeta = employeeMetaMap.get(normalizeEmployeeCode(code));
     const hireDateText = normalizeHireDate(
       (employeeMeta as any)?.hireDate ?? (employeeMeta as any)?.hire_date ?? (employeeMeta as any)?.["تاريخ التعيين"]
     );
     return calculateOnboardingDays(hireDateText, effectiveReportStartDate);
+  };
+  const getTerminationPeriodDaysByCode = (code: string) => {
+    const employeeMeta = employeeMetaMap.get(normalizeEmployeeCode(code));
+    const terminationDateText = normalizeHireDate(
+      (employeeMeta as any)?.terminationDate ?? (employeeMeta as any)?.termination_date ?? (employeeMeta as any)?.["تاريخ ترك العمل"]
+    );
+    return calculateTerminationPeriodDays(terminationDateText, effectiveReportEndDate);
   };
 
   const detailHeaders = [
@@ -133,7 +172,9 @@ export const buildAttendanceExportRows = ({
     "اسم الموظف",
     "القسم",
     "تاريخ التعيين",
+    "تاريخ ترك العمل",
     "فترة الالتحاق",
+    "فترة الترك",
     "الدخول",
     "الخروج",
     "ساعات العمل",
@@ -281,7 +322,9 @@ export const buildAttendanceExportRows = ({
       employeeMap.get(normalizeEmployeeCode(record.employeeCode)) || "(غير موجود بالماستر)",
       getDepartmentByCode(record.employeeCode),
       getHireDateSerialByCode(record.employeeCode),
+      getTerminationDateSerialByCode(record.employeeCode),
       getOnboardingDaysByCode(record.employeeCode),
+      getTerminationPeriodDaysByCode(record.employeeCode),
       record.checkIn ? parseTimeToSeconds(toTimeText(record.checkIn)) / 86400 : "",
       record.checkOut ? parseTimeToSeconds(toTimeText(record.checkOut)) / 86400 : "",
       typeof record.totalHours === "number" ? Number(record.totalHours.toFixed(2)) : 0,
@@ -369,11 +412,12 @@ export const buildAttendanceExportRows = ({
 
   const summaryRows: any[][] = [summaryHeaders];
   Array.from(summaryByEmployee.values()).forEach((summary) => {
+    const terminationPeriodDays = getTerminationPeriodDaysByCode(summary.code);
     const summaryAbsenceTotal =
       summary.absenceDays * 2 +
       summary.excusedAbsenceDays +
       summary.leaveDeductionDays +
-      summary.terminationPeriodDays;
+      terminationPeriodDays;
     const summaryPenaltiesTotal = summary.totalLate + summary.totalEarlyLeave + summary.totalMissingStamp + summaryAbsenceTotal;
     const compEarned = summary.compDaysFriday + summary.compDaysOfficial;
     summaryRows.push([
@@ -381,13 +425,14 @@ export const buildAttendanceExportRows = ({
       summary.name,
       getDepartmentByCode(summary.code),
       getHireDateSerialByCode(summary.code),
+      getTerminationDateSerialByCode(summary.code),
       getOnboardingDaysByCode(summary.code),
       summary.totalLate,
       summary.totalEarlyLeave,
       summary.totalMissingStamp,
       summaryAbsenceTotal,
       summaryPenaltiesTotal,
-      summary.terminationPeriodDays,
+      terminationPeriodDays,
       summary.compDaysFriday,
       summary.compDaysOfficial,
       compEarned,
