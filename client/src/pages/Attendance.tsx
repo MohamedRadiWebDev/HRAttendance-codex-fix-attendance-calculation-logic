@@ -386,6 +386,23 @@ export default function Attendance() {
             fgColor: { argb: "FFFED7AA" },
           };
         }
+
+        ["تاريخ التعيين", "تاريخ ترك العمل"].forEach((header) => {
+          const dateCell = summarySheet[XLSX.utils.encode_cell({ r: rowIndex, c: summaryIndex[header] })];
+          if (dateCell && Number(dateCell.v) > 0) {
+            dateCell.t = "n";
+            dateCell.z = "yyyy-mm-dd";
+          }
+        });
+
+        ["فترة الالتحاق", "فترة الترك", "بدل يوم الجمع", "بدل أيام الإجازات الرسمية", "إجمالي أيام البدل", "إجمالي التأخيرات", "إجمالي الانصراف المبكر", "إجمالي سهو البصمة", "إجمالي الغياب", "إجمالي الجزاءات"].forEach((header) => {
+          const cell = summarySheet[XLSX.utils.encode_cell({ r: rowIndex, c: summaryIndex[header] })];
+          if (cell) {
+            cell.t = "n";
+            cell.v = Number(cell.v || 0);
+            cell.z = "0.00";
+          }
+        });
       }
 
       const dayTypeCol = detailIndex["نوع اليوم"];
