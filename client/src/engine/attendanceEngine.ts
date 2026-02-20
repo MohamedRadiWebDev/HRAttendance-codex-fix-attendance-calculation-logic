@@ -613,6 +613,8 @@ export const processAttendanceRecords = ({
 
     for (let d = new Date(searchStart); d <= searchEnd; d.setUTCDate(d.getUTCDate() + 1)) {
       const dateStr = formatLocalDay(d);
+      const hireDateKey = normalizeDateKey(employee.hireDate || null);
+      const isJoiningPeriod = Boolean(hireDateKey && dateStr < hireDateKey);
       const terminationDateKey = normalizeDateKey(employee.terminationDate || null);
       const isTerminationPeriod = Boolean(terminationDateKey && dateStr > terminationDateKey);
       const holidayMatch = officialHolidays.find((holiday) => holiday.date === dateStr);
@@ -660,6 +662,36 @@ export const processAttendanceRecords = ({
       const hasLeaveFromBalance = dayAdjustments.some((adj) => adj.type === "إجازة من الرصيد");
       const hasCompDayUsed = dayAdjustments.some((adj) => adj.type === "إجازة بدل");
       const hasExcusedAbsence = excusedAbsenceAdjustments.length > 0;
+
+      if (isJoiningPeriod) {
+        records.push({
+          id: recordId++,
+          employeeCode: employee.code,
+          date: dateStr,
+          checkIn: null,
+          checkOut: null,
+          totalHours: 0,
+          status: "Joining Period",
+          overtimeHours: 0,
+          penalties: [],
+          isOvernight: false,
+          notes: null,
+          missionStart: null,
+          missionEnd: null,
+          halfDayExcused: false,
+          isOfficialHoliday: false,
+          workedOnOfficialHoliday: null,
+          compDayCredit: 0,
+          leaveDeductionDays: 0,
+          excusedAbsenceDays: 0,
+          terminationPeriodDays: 0,
+          compDaysFriday: 0,
+          compDaysOfficial: 0,
+          compDaysTotal: 0,
+          compDaysUsed: 0,
+        } as AttendanceRecord);
+        continue;
+      }
 
       const consumedPunches = consumedPunchesByDate.get(dateStr);
       const dayPunches = filterConsumedPunches(punchesByDate.get(dateStr) || [], consumedPunches)

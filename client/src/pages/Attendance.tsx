@@ -17,8 +17,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import * as XLSX from 'xlsx';
-import { buildAttendanceExportRows, summaryFormulaByRow } from "@/exporters/attendanceExport";
+import { buildAttendanceExportRows } from "@/exporters/attendanceExport";
 import { useAttendanceStore } from "@/store/attendanceStore";
 import { useEffectsStore } from "@/store/effectsStore";
 import { resolveShiftForDate, timeStringToSeconds } from "@/engine/attendanceEngine";
@@ -242,12 +241,13 @@ export default function Attendance() {
       }
     });
   };
-  const handleExport = () => {
+  const handleExport = async () => {
     if (!records || records.length === 0) return;
     const { detailHeaders, detailRows, summaryHeaders, summaryRows } = buildAttendanceExportRows({
       records,
       employees: employees || [],
       reportStartDate: dateRange.start,
+      reportEndDate: dateRange.end,
     });
 
     const hasValidHeaders = Array.isArray(detailHeaders)
@@ -283,179 +283,147 @@ export default function Attendance() {
     }
 
     try {
-      const workbook = XLSX.utils.book_new();
-    const detailSheet = XLSX.utils.aoa_to_sheet(detailRows);
-    const summarySheet = XLSX.utils.aoa_to_sheet(summaryRows);
-    const applyHeaderStyle = (sheet: XLSX.WorkSheet, headerCount: number) => {
-      for (let colIndex = 0; colIndex < headerCount; colIndex += 1) {
-        const cellAddress = XLSX.utils.encode_cell({ r: 0, c: colIndex });
-        const cell = sheet[cellAddress];
-        if (!cell) continue;
-        cell.s = {
-          font: { bold: true },
-          fill: { patternType: "solid", fgColor: { rgb: "E2E8F0" } },
-        };
-      }
-    };
-    applyHeaderStyle(detailSheet, detailHeaders.length);
-    applyHeaderStyle(summarySheet, summaryHeaders.length);
-
-    const buildAutoWidths = (rows: any[][]) => {
-      if (rows.length === 0) return [];
-      const widths = rows[0].map((_, colIndex) => {
-        const max = rows.reduce((acc, row) => {
-          const value = row[colIndex];
-          if (value === null || value === undefined) return acc;
-          const length = String(value).length;
-          return Math.max(acc, length);
-        }, 6);
-        return { wch: Math.min(Math.max(max + 2, 8), 40) };
+      const ExcelJSImport = await import(/* @vite-ignore */ "https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js");
+      const ExcelJS = (ExcelJSImport as any).default || ExcelJSImport;
+      const workbook = new ExcelJS.Workbook();
+      const detailSheet = workbook.addWorksheet("تفصيلي", {
+        views: [{ state: "frozen", xSplit: 4, ySplit: 1, rightToLeft: true }],
       });
-      return widths;
-    };
+      const summarySheet = workbook.addWorksheet("ملخص", {
+        views: [{ state: "frozen", xSplit: 2, ySplit: 1, rightToLeft: true }],
+      });
 
-    detailSheet["!cols"] = buildAutoWidths(detailRows);
-    summarySheet["!cols"] = buildAutoWidths(summaryRows);
+      const thinBorder = {
+        top: { style: "thin", color: { argb: "FFD1D5DB" } },
+        bottom: { style: "thin", color: { argb: "FFD1D5DB" } },
+        left: { style: "thin", color: { argb: "FFD1D5DB" } },
+        right: { style: "thin", color: { argb: "FFD1D5DB" } },
+      } as const;
+      const buildColumnWidths = (headers: string[]) => headers.map((header) => {
+        if (header.includes("الكود")) return 10;
+        if (header.includes("اسم الموظف")) return 28;
+        if (header.includes("ملاحظات")) return 40;
+        if (header.includes("مدير الإدارة")) return 26;
+        if (header.includes("التاريخ") || header.includes("اليوم") || header.includes("فترة")) return 12;
+        if (header.includes("الدخول") || header.includes("الخروج")) return 10;
+        return 14;
+      });
+      const writeSheet = (sheet: any, rows: any[][], headers: string[]) => {
+        rows.forEach((row) => sheet.addRow(row));
+        sheet.columns = headers.map((header, i) => ({ header, key: header, width: buildColumnWidths(headers)[i] }));
+        const headerRow = sheet.getRow(1);
+        headerRow.eachCell((cell: any) => {
+          cell.font = { bold: true };
+          cell.alignment = { horizontal: "center", vertical: "middle" };
+          cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE5E7EB" } };
+          cell.border = thinBorder;
+        });
 
-    detailSheet["!freeze"] = { xSplit: 0, ySplit: 1 };
-    summarySheet["!freeze"] = { xSplit: 0, ySplit: 1 };
-    detailSheet["!autofilter"] = { ref: "A1:S1" };
-    summarySheet["!autofilter"] = { ref: "A1:N1" };
-    detailSheet["!rtl"] = true;
-    summarySheet["!rtl"] = true;
+        for (let rowIndex = 2; rowIndex <= rows.length; rowIndex += 1) {
+          const excelRow = sheet.getRow(rowIndex);
+          const zebra = rowIndex % 2 === 0 ? "FFF3F4F6" : "FFFFFFFF";
+          excelRow.eachCell((cell: any) => {
+            cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: zebra } };
+            cell.border = thinBorder;
+            cell.alignment = { horizontal: "right", vertical: "middle" };
+          });
+        }
 
-    for (let rowIndex = 1; rowIndex < detailRows.length; rowIndex += 1) {
-      const isFridayRow = detailRows[rowIndex][11] === "جمعة";
-      const hasViolation = Number(detailRows[rowIndex][17] || 0) > 0;
-      const fill = isFridayRow
-        ? "D9E8FF"
-        : hasViolation
-          ? "FFE5E5"
-          : rowIndex % 2 === 0
-            ? "F8FAFC"
-            : "FFFFFF";
-      for (let colIndex = 0; colIndex < detailHeaders.length; colIndex += 1) {
-        const cellAddress = XLSX.utils.encode_cell({ r: rowIndex, c: colIndex });
-        const cell = detailSheet[cellAddress];
-        if (!cell) continue;
-        if (fill) {
-          cell.s = {
-            fill: { patternType: "solid", fgColor: { rgb: fill } },
+        sheet.autoFilter = {
+          from: { row: 1, column: 1 },
+          to: { row: 1, column: headers.length },
+        };
+      };
+
+      writeSheet(detailSheet, detailRows, detailHeaders);
+      writeSheet(summarySheet, summaryRows, summaryHeaders);
+
+      const detailIndex = Object.fromEntries(detailHeaders.map((h, i) => [h, i + 1])) as Record<string, number>;
+      const summaryIndex = Object.fromEntries(summaryHeaders.map((h, i) => [h, i + 1])) as Record<string, number>;
+
+      const setDateFormat = (sheet: any, col: number, rowCount: number) => {
+        for (let r = 2; r <= rowCount; r += 1) {
+          const cell = sheet.getCell(r, col);
+          if (typeof cell.value === "number" && cell.value > 0) cell.numFmt = "yyyy-mm-dd";
+        }
+      };
+      const setNumFormat = (sheet: any, col: number, rowCount: number, fmt = "0.00", intOnly = false) => {
+        for (let r = 2; r <= rowCount; r += 1) {
+          const cell = sheet.getCell(r, col);
+          cell.value = Number(cell.value || 0);
+          cell.numFmt = intOnly ? "0" : fmt;
+        }
+      };
+      const setTimeFormat = (sheet: any, col: number, rowCount: number) => {
+        for (let r = 2; r <= rowCount; r += 1) {
+          const cell = sheet.getCell(r, col);
+          if (typeof cell.value === "number" && cell.value > 0) cell.numFmt = "hh:mm";
+        }
+      };
+
+      ["التاريخ", "تاريخ التعيين", "تاريخ ترك العمل"].forEach((header) => setDateFormat(detailSheet, detailIndex[header], detailRows.length));
+      ["فترة الالتحاق", "فترة الترك"].forEach((header) => setNumFormat(detailSheet, detailIndex[header], detailRows.length, "0", true));
+      ["الدخول", "الخروج"].forEach((header) => setTimeFormat(detailSheet, detailIndex[header], detailRows.length));
+      ["ساعات العمل", "الإضافي", "تأخير", "انصراف مبكر", "سهو بصمة", "غياب", "إجمالي الجزاءات"].forEach((header) => setNumFormat(detailSheet, detailIndex[header], detailRows.length));
+
+      ["تاريخ التعيين", "تاريخ ترك العمل"].forEach((header) => setDateFormat(summarySheet, summaryIndex[header], summaryRows.length));
+      ["فترة الالتحاق", "فترة الترك", "بدل يوم الجمع", "بدل أيام الإجازات الرسمية", "إجمالي أيام البدل", "إجمالي التأخيرات", "إجمالي الانصراف المبكر", "إجمالي سهو البصمة", "إجمالي الغياب", "إجمالي الجزاءات"].forEach((header) => setNumFormat(summarySheet, summaryIndex[header], summaryRows.length));
+
+      for (let r = 2; r <= detailRows.length; r += 1) {
+        const status = String(detailSheet.getCell(r, detailIndex["الحالة"]).value || "");
+        const dayType = String(detailSheet.getCell(r, detailIndex["نوع اليوم"]).value || "");
+        const penalties = Number(detailSheet.getCell(r, detailIndex["إجمالي الجزاءات"]).value || 0);
+        if (status === "غياب" || dayType === "جمعة" || dayType === "إجازة رسمية") {
+          const fill = status === "غياب" ? "FFFEE2E2" : "FFF3F4F6";
+          detailSheet.getRow(r).eachCell((cell: any) => {
+            cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: fill } };
+          });
+        }
+        if (penalties > 0) {
+          detailSheet.getCell(r, detailIndex["إجمالي الجزاءات"]).fill = {
+            type: "pattern",
+            pattern: "solid",
+            fgColor: { argb: "FFFED7AA" },
           };
         }
       }
-    }
 
-    for (let rowIndex = 1; rowIndex < detailRows.length; rowIndex += 1) {
-      const dateCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: 0 })];
-      if (dateCell) {
-        dateCell.t = "n";
-        dateCell.z = "yyyy-mm-dd";
-      }
-      const hireDateCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: 5 })];
-      if (hireDateCell && Number(hireDateCell.v) > 0) {
-        hireDateCell.t = "n";
-        hireDateCell.z = "yyyy-mm-dd";
-      }
-      const onboardingDaysCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: 6 })];
-      if (onboardingDaysCell) {
-        onboardingDaysCell.t = "n";
-        onboardingDaysCell.z = "0";
-      }
-      const checkInCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: 7 })];
-      if (checkInCell && Number(checkInCell.v) > 0) {
-        checkInCell.t = "n";
-        checkInCell.z = "hh:mm:ss";
-      }
-      const checkOutCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: 8 })];
-      if (checkOutCell && Number(checkOutCell.v) > 0) {
-        checkOutCell.t = "n";
-        checkOutCell.z = "hh:mm:ss";
-      }
-      const hoursCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: 9 })];
-      if (hoursCell) {
-        hoursCell.t = "n";
-        hoursCell.z = "0.00";
-      }
-      const overtimeCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: 10 })];
-      if (overtimeCell) {
-        overtimeCell.t = "n";
-        overtimeCell.z = "0.00";
-      }
-      const penaltyColumns = [13, 14, 15, 16, 17];
-      penaltyColumns.forEach((colIndex) => {
-        const penaltyCell = detailSheet[XLSX.utils.encode_cell({ r: rowIndex, c: colIndex })];
-        if (penaltyCell) {
-          penaltyCell.t = "n";
-          penaltyCell.z = "0.00";
-        }
-      });
-    }
-
-    for (let rowIndex = 1; rowIndex < summaryRows.length; rowIndex += 1) {
-      const fill = rowIndex % 2 === 0 ? "F8FAFC" : "FFFFFF";
-      for (let colIndex = 0; colIndex < summaryHeaders.length; colIndex += 1) {
-        const cellAddress = XLSX.utils.encode_cell({ r: rowIndex, c: colIndex });
-        const cell = summarySheet[cellAddress];
-        if (!cell) continue;
-        cell.s = {
-          ...(cell.s || {}),
-          fill: { patternType: "solid", fgColor: { rgb: fill } },
+      const dayTypeCol = detailIndex["نوع اليوم"];
+      const statusCol = detailIndex["الحالة"];
+      for (let r = 2; r <= Math.max(detailRows.length, 2); r += 1) {
+        detailSheet.getCell(r, dayTypeCol).dataValidation = {
+          type: "list",
+          allowBlank: true,
+          formulae: ['"عمل,جمعة,إجازة رسمية,إجازة تحصيل,فترة التحاق,فترة ترك"'],
+        };
+        detailSheet.getCell(r, statusCol).dataValidation = {
+          type: "list",
+          allowBlank: true,
+          formulae: ['"حضور,تأخير,غياب,إجازة,خصم,"'],
         };
       }
-      const hireDateCell = summarySheet[XLSX.utils.encode_cell({ r: rowIndex, c: 3 })];
-      if (hireDateCell && Number(hireDateCell.v) > 0) {
-        hireDateCell.t = "n";
-        hireDateCell.z = "yyyy-mm-dd";
-      }
-      for (let colIndex = 4; colIndex < summaryHeaders.length; colIndex += 1) {
-        const cell = summarySheet[XLSX.utils.encode_cell({ r: rowIndex, c: colIndex })];
-        if (cell) {
-          cell.t = "n";
-          cell.z = "0.00";
-        }
-      }
-
-      const rowNumber = rowIndex + 1;
-      const formulas = summaryFormulaByRow(rowNumber);
-      const formulaCols: Array<[string, string]> = [
-        ["F", formulas.F],
-        ["G", formulas.G],
-        ["H", formulas.H],
-        ["I", formulas.I],
-        ["J", formulas.J],
-        ["L", formulas.L],
-        ["M", formulas.M],
-        ["N", formulas.N],
-      ];
-      formulaCols.forEach(([col, formula]) => {
-        const addr = `${col}${rowNumber}`;
-        if (!summarySheet[addr]) summarySheet[addr] = { t: "n", v: 0 };
-        summarySheet[addr].f = formula;
-        summarySheet[addr].t = "n";
-        summarySheet[addr].z = "0.00";
-      });
-    }
-
 
       const detailFirstRowByCode = new Map<string, number>();
-      for (let rowIndex = 1; rowIndex < detailRows.length; rowIndex += 1) {
-        const code = String(detailRows[rowIndex]?.[2] || "");
-        if (code && !detailFirstRowByCode.has(code)) detailFirstRowByCode.set(code, rowIndex + 1);
+      for (let rowIndex = 2; rowIndex <= detailRows.length; rowIndex += 1) {
+        const code = String(detailSheet.getCell(rowIndex, detailIndex["الكود"]).value || "");
+        if (code && !detailFirstRowByCode.has(code)) detailFirstRowByCode.set(code, rowIndex);
       }
-      for (let rowIndex = 1; rowIndex < summaryRows.length; rowIndex += 1) {
-        const code = String(summaryRows[rowIndex]?.[0] || "");
+      for (let rowIndex = 2; rowIndex <= summaryRows.length; rowIndex += 1) {
+        const code = String(summarySheet.getCell(rowIndex, summaryIndex["الكود"]).value || "");
         const target = detailFirstRowByCode.get(code);
         if (!target) continue;
-        const linkCell = XLSX.utils.encode_cell({ r: rowIndex, c: 1 });
-        const cell = summarySheet[linkCell];
-        if (!cell) continue;
-        cell.l = { Target: `#'تفصيلي'!A${target}`, Tooltip: `الانتقال لتفاصيل ${code}` };
+        const cell = summarySheet.getCell(rowIndex, summaryIndex["اسم الموظف"]);
+        cell.value = { text: String(cell.value || ""), hyperlink: `#'تفصيلي'!A${target}` };
       }
 
-      XLSX.utils.book_append_sheet(workbook, detailSheet, "تفصيلي");
-      XLSX.utils.book_append_sheet(workbook, summarySheet, "ملخص");
-      XLSX.writeFile(workbook, `Attendance_${dateRange.start}_${dateRange.end}.xlsx`);
+      const buffer = await workbook.xlsx.writeBuffer();
+      const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `Attendance_${dateRange.start}_${dateRange.end}.xlsx`;
+      anchor.click();
+      URL.revokeObjectURL(url);
       toast({ title: "تم التصدير", description: "تم تحميل ملف الإكسل بنجاح" });
     } catch {
       toast({
@@ -860,6 +828,7 @@ function StatusBadge({ status }: { status: string | null }) {
     "Leave Deduction": "bg-rose-100 text-rose-700 border-rose-200",
     "Excused Absence": "bg-amber-100 text-amber-700 border-amber-200",
     "Termination Period": "bg-slate-200 text-slate-700 border-slate-300",
+    "Joining Period": "bg-cyan-100 text-cyan-700 border-cyan-300",
     "Friday": "bg-amber-100 text-amber-700 border-amber-200",
     "Friday Attended": "bg-amber-100 text-amber-700 border-amber-200",
     "Comp Day": "bg-emerald-100 text-emerald-700 border-emerald-200",
@@ -874,6 +843,7 @@ function StatusBadge({ status }: { status: string | null }) {
     "Leave Deduction": "إجازة بالخصم",
     "Excused Absence": "غياب بعذر",
     "Termination Period": "فترة ترك",
+    "Joining Period": "فترة التحاق",
     "Friday": "جمعة",
     "Friday Attended": "جمعة (حضور)",
     "Comp Day": "يوم بالبدل",
