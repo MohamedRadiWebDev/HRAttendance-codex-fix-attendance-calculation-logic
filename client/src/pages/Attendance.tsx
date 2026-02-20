@@ -242,7 +242,7 @@ export default function Attendance() {
       }
     });
   };
-  const handleExport = () => {
+  const handleExport = async () => {
     if (!records || records.length === 0) return;
     const { detailHeaders, detailRows, summaryHeaders, summaryRows } = buildAttendanceExportRows({
       records,
